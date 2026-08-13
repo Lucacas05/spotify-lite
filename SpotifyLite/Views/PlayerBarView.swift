@@ -112,35 +112,19 @@ private struct PlaybackScrubber: View {
     @State private var scrubbingTrackID: String?
     @State private var hovering = false
 
-    var body: some View {
-        // Pause when idle: an unconditional 0.2s TimelineView was ~15% CPU
-        // even with the window hidden. Scrubbing uses local @State, not ticks.
-        TimelineView(.animation(
-            minimumInterval: PlaybackScrubberTimeline.tickSeconds,
-            paused: PlaybackScrubberTimeline.isPaused(
-                isPlaying: player.state?.isPlaying ?? false,
-                durationMs: player.state?.item?.durationMs ?? 0,
-                isScrubbing: isScrubbing
-            )
-        )) { context in
-            let durationMs = max(player.state?.item?.durationMs ?? 0, 0)
-            let live = player.progress(at: context.date)
-            let displayed = min(
-                max(Int((isScrubbing ? scrubProgressMs : Double(live)).rounded()), 0),
-                durationMs
-            )
-            let fraction: CGFloat = durationMs > 0
-                ? CGFloat(displayed) / CGFloat(durationMs)
-                : 0
+    private var usesTimedScrubber: Bool {
+        PlaybackScrubberTimeline.usesTimedScrubber(
+            isPlaying: player.state?.isPlaying ?? false,
+            durationMs: player.state?.item?.durationMs ?? 0,
+            isScrubbing: isScrubbing
+        )
+    }
 
-            VStack(spacing: 4) {
-                bar(fraction: fraction, durationMs: durationMs, live: live)
-                HStack {
-                    timeLabel(displayed)
-                    Spacer()
-                    timeLabel(durationMs)
-                }
-            }
+    var body: some View {
+        let durationMs = max(player.state?.item?.durationMs ?? 0, 0)
+        VStack(spacing: 4) {
+            bar(durationMs: durationMs)
+            timeRow(durationMs: durationMs)
         }
         .onHover { hovering = $0 }
         .onChange(of: player.currentTrackIdentifier) { _, _ in
@@ -150,46 +134,85 @@ private struct PlaybackScrubber: View {
         }
     }
 
+    private func timeRow(durationMs: Int) -> some View {
+        HStack {
+            timedDate { date in
+                timeLabel(displayedProgress(at: date, durationMs: durationMs))
+            }
+            Spacer()
+            timeLabel(durationMs)
+        }
+    }
+
     private func timeLabel(_ ms: Int) -> some View {
         Text(formatTime(milliseconds: ms))
             .font(.system(size: 10, weight: .medium, design: .monospaced))
             .foregroundStyle(.secondary)
     }
 
-    private func bar(fraction: CGFloat, durationMs: Int, live: Int) -> some View {
+    private func bar(durationMs: Int) -> some View {
         GeometryReader { geo in
             let width = geo.size.width
-            let filled = max(0, min(width * fraction, width))
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.primary.opacity(0.12))
-                Capsule()
-                    .fill(hovering || isScrubbing ? Color.green : Color.primary.opacity(0.55))
-                    .frame(width: max(filled, 3))
-                if hovering || isScrubbing, durationMs > 0 {
-                    Circle()
-                        .fill(Color.primary)
-                        .frame(width: 10, height: 10)
-                        .offset(x: min(max(filled - 5, 0), width - 10))
+                timedDate { date in
+                    fill(at: date, width: width, durationMs: durationMs)
                 }
             }
             .frame(height: 3)
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
-            .gesture(dragGesture(width: width, durationMs: durationMs, live: live))
+            .gesture(dragGesture(width: width, durationMs: durationMs))
         }
         .frame(height: 14)
-        .disabled((player.state?.item?.durationMs ?? 0) <= 0)
+        .disabled(durationMs <= 0)
         .help("Playback position")
     }
 
-    private func dragGesture(width: CGFloat, durationMs: Int, live: Int) -> some Gesture {
+    @ViewBuilder
+    private func timedDate<Content: View>(@ViewBuilder content: @escaping (Date) -> Content) -> some View {
+        if usesTimedScrubber {
+            TimelineView(.periodic(from: .now, by: PlaybackScrubberTimeline.tickSeconds)) { context in
+                content(context.date)
+            }
+        } else {
+            content(.now)
+        }
+    }
+
+    private func fill(at date: Date, width: CGFloat, durationMs: Int) -> some View {
+        let displayed = displayedProgress(at: date, durationMs: durationMs)
+        let fraction: CGFloat = durationMs > 0 ? CGFloat(displayed) / CGFloat(durationMs) : 0
+        let filled = max(0, min(width * fraction, width))
+        return ZStack(alignment: .leading) {
+            Capsule()
+                .fill(hovering || isScrubbing ? Color.green : Color.primary.opacity(0.55))
+                .frame(width: max(filled, 3))
+            if hovering || isScrubbing, durationMs > 0 {
+                Circle()
+                    .fill(Color.primary)
+                    .frame(width: 10, height: 10)
+                    .offset(x: min(max(filled - 5, 0), width - 10))
+            }
+        }
+    }
+
+    private func displayedProgress(at date: Date, durationMs: Int) -> Int {
+        let live = player.progress(at: date)
+        return min(
+            max(Int((isScrubbing ? scrubProgressMs : Double(live)).rounded()), 0),
+            durationMs
+        )
+    }
+
+    private func dragGesture(width: CGFloat, durationMs: Int) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 guard durationMs > 0, width > 0 else { return }
                 if !isScrubbing {
                     isScrubbing = true
                     scrubbingTrackID = player.currentTrackIdentifier
-                    scrubProgressMs = Double(live)
+                    scrubProgressMs = Double(player.progress(at: .now))
                 }
                 let x = min(max(value.location.x, 0), width)
                 scrubProgressMs = Double(durationMs) * Double(x / width)
