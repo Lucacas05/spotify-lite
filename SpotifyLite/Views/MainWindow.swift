@@ -39,12 +39,9 @@ struct MainWindow: View {
         case .search, nil:
             SearchView(player: player)
         case .likedSongs:
-            TrackListView(title: "Liked Songs", path: "me/tracks", contextURI: nil, player: player)
+            TrackListView(title: "Liked Songs", source: .likedSongs, player: player)
         case .playlist(let playlist):
-            TrackListView(title: playlist.name,
-                          path: "playlists/\(playlist.id)/tracks",
-                          contextURI: "spotify:playlist:\(playlist.id)",
-                          player: player)
+            TrackListView(title: playlist.name, source: .playlist(id: playlist.id), player: player)
         }
     }
 

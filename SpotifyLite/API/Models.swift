@@ -53,10 +53,20 @@ struct Track: Decodable, Identifiable {
     }
 }
 
-/// Item de playlist o de Liked Songs: envuelve el track, que puede ser null
+/// Item de Liked Songs: envuelve el track, que puede ser null
 /// (tracks eliminados o locales).
 struct TrackItem: Decodable {
     let track: Track?
+}
+
+/// GET /playlists/{id} (apps en dev mode desde 2025): /playlists/{id}/tracks
+/// devuelve 403, y aquí el track viene bajo la clave "item".
+struct PlaylistEntry: Decodable {
+    let item: Track?
+}
+
+struct PlaylistDetailResponse: Decodable {
+    let items: Paging<PlaylistEntry>
 }
 
 struct Device: Decodable, Identifiable {

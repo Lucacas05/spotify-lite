@@ -1,18 +1,28 @@
 import SwiftUI
 
-/// Lista de tracks paginada y perezosa, compartida por playlists y Liked Songs.
+enum TrackListSource: Equatable {
+    /// GET /playlists/{id}: llega todo de una vez (el endpoint /tracks da 403
+    /// para apps en dev mode y limit/offset se ignoran).
+    case playlist(id: String)
+    /// GET /me/tracks, paginado con limit máximo 50.
+    case likedSongs
+}
+
+/// Lista de tracks compartida por playlists y Liked Songs.
 struct TrackListView: View {
     let title: String
-    /// Path de la Web API que devuelve Paging<TrackItem> (p. ej. "playlists/x/tracks").
-    let path: String
-    /// context_uri para reproducir dentro del contexto (nil en Liked Songs).
-    let contextURI: String?
+    let source: TrackListSource
     var player: PlayerStore
 
     @State private var tracks: [Track] = []
     @State private var total = 0
     @State private var loading = false
     @State private var error: String?
+
+    private var contextURI: String? {
+        if case .playlist(let id) = source { return "spotify:playlist:\(id)" }
+        return nil
+    }
 
     var body: some View {
         Group {
@@ -26,10 +36,7 @@ struct TrackListView: View {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
                             TrackRow(track: track) {
-                                Task {
-                                    await player.play(contextURI: contextURI,
-                                                      trackURI: contextURI == nil ? track.uri : track.uri)
-                                }
+                                Task { await player.play(contextURI: contextURI, trackURI: track.uri) }
                             }
                             .onAppear {
                                 if index == tracks.count - 1 { Task { await loadMore() } }
@@ -43,7 +50,7 @@ struct TrackListView: View {
         }
         .navigationTitle(title)
         .navigationSubtitle(total > 0 ? "\(total) canciones" : "")
-        .task(id: path) {
+        .task(id: source) {
             tracks = []
             total = 0
             error = nil
@@ -52,14 +59,23 @@ struct TrackListView: View {
     }
 
     private func loadMore() async {
-        guard !loading, tracks.count < total || total == 0 else { return }
+        guard !loading else { return }
         loading = true
         defer { loading = false }
         do {
-            let page: Paging<TrackItem> = try await SpotifyClient.shared.get(
-                path, query: ["limit": "100", "offset": String(tracks.count)])
-            tracks.append(contentsOf: page.items.compactMap(\.track))
-            total = page.total
+            switch source {
+            case .playlist(let id):
+                guard tracks.isEmpty else { return }
+                let response: PlaylistDetailResponse = try await SpotifyClient.shared.get("playlists/\(id)")
+                tracks = response.items.items.compactMap(\.item)
+                total = response.items.total
+            case .likedSongs:
+                guard tracks.count < total || total == 0 else { return }
+                let page: Paging<TrackItem> = try await SpotifyClient.shared.get(
+                    "me/tracks", query: ["limit": "50", "offset": String(tracks.count)])
+                tracks.append(contentsOf: page.items.compactMap(\.track))
+                total = page.total
+            }
         } catch {
             self.error = error.localizedDescription
         }

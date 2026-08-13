@@ -48,7 +48,7 @@ struct SearchView: View {
             defer { searching = false }
             do {
                 let response: SearchResponse = try await SpotifyClient.shared.get(
-                    "search", query: ["q": trimmed, "type": "track", "limit": "50"])
+                    "search", query: ["q": trimmed, "type": "track", "limit": "10"])
                 results = response.tracks?.items ?? []
                 error = nil
             } catch is CancellationError {
