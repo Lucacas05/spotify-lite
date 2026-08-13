@@ -1,5 +1,9 @@
 import SwiftUI
 
+extension Notification.Name {
+    static let focusSpotifySearch = Notification.Name("focusSpotifySearch")
+}
+
 struct SearchView: View {
     var player: PlayerStore
 
@@ -7,11 +11,13 @@ struct SearchView: View {
     @State private var results: [Track] = []
     @State private var searching = false
     @State private var error: String?
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             TextField("Buscar canciones…", text: $query)
                 .textFieldStyle(.roundedBorder)
+                .focused($searchFocused)
                 .padding(12)
 
             if let error {
@@ -24,7 +30,7 @@ struct SearchView: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(results) { track in
-                            TrackRow(track: track) {
+                            TrackRow(track: track, player: player) {
                                 Task { await player.play(trackURI: track.uri) }
                             }
                             Divider().padding(.leading, 56)
@@ -34,6 +40,10 @@ struct SearchView: View {
             }
         }
         .navigationTitle("Buscar")
+        .onAppear { searchFocused = true }
+        .onReceive(NotificationCenter.default.publisher(for: .focusSpotifySearch)) { _ in
+            searchFocused = true
+        }
         .task(id: query) {
             let trimmed = query.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else {

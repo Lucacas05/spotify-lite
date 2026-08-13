@@ -2,15 +2,26 @@ import SwiftUI
 
 @main
 struct SpotifyLiteApp: App {
+    @State private var auth = AuthManager()
+    @State private var player = PlayerStore()
+    @AppStorage("menuBarEnabled") private var menuBarEnabled = false
+
     init() {
-        // Caché de carátulas: 10 MB en memoria, 50 MB en disco.
-        URLCache.shared = URLCache(memoryCapacity: 10 * 1024 * 1024,
+        // Caché de carátulas: mínima en RAM, 50 MB en disco.
+        URLCache.shared = URLCache(memoryCapacity: 2 * 1024 * 1024,
                                    diskCapacity: 50 * 1024 * 1024)
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(auth: auth, player: player)
         }
+
+        MenuBarExtra(isInserted: $menuBarEnabled) {
+            MenuBarPlayerView(auth: auth, player: player)
+        } label: {
+            Label(player.state?.item?.name ?? "SpotifyLite", systemImage: "music.note")
+        }
+        .menuBarExtraStyle(.window)
     }
 }

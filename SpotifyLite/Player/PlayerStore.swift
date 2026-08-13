@@ -6,6 +6,8 @@ import Observation
 final class PlayerStore {
     private(set) var state: PlaybackState?
     private(set) var devices: [Device] = []
+    private(set) var queue: [Track] = []
+    private(set) var queueIsLoading = false
     var lastError: String?
 
     private var pollTask: Task<Void, Never>?
@@ -48,6 +50,27 @@ final class PlayerStore {
         await run { try await SpotifyClient.shared.command("POST", "me/player/next") }
     }
 
+    func loadQueue() async {
+        queueIsLoading = true
+        defer { queueIsLoading = false }
+        do {
+            let response: QueueResponse = try await SpotifyClient.shared.get("me/player/queue")
+            queue = response.queue
+            lastError = nil
+        } catch {
+            queue = []
+            lastError = friendlyMessage(for: error)
+        }
+    }
+
+    func playNext(_ track: Track) async {
+        await run(refreshAfter: false) {
+            try await SpotifyClient.shared.command(
+                "POST", "me/player/queue", query: ["uri": track.uri])
+        }
+        await loadQueue()
+    }
+
     func previous() async {
         await run { try await SpotifyClient.shared.command("POST", "me/player/previous") }
     }
@@ -86,7 +109,23 @@ final class PlayerStore {
                 await refresh()
             }
         } catch {
-            lastError = error.localizedDescription
+            lastError = friendlyMessage(for: error)
         }
+    }
+
+    private func friendlyMessage(for error: Error) -> String {
+        if let apiError = error as? SpotifyAPIError,
+           case .http(let status, _) = apiError {
+            switch status {
+            case 401: return "Tu sesión de Spotify caducó. Cierra sesión y vuelve a entrar."
+            case 403: return "Spotify rechazó el control. Comprueba que tu cuenta sea Premium y que haya un dispositivo activo."
+            case 404: return "No hay ningún dispositivo Spotify activo. Abre Spotify en un dispositivo e inténtalo de nuevo."
+            default: break
+            }
+        }
+        if (error as? URLError) != nil {
+            return "Sin conexión con Spotify. Comprueba tu conexión a internet."
+        }
+        return error.localizedDescription
     }
 }

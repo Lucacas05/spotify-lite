@@ -3,6 +3,7 @@ import SwiftUI
 struct PlayerBarView: View {
     var player: PlayerStore
     @State private var volume: Double = 50
+    @State private var showingQueue = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -48,6 +49,17 @@ struct PlayerBarView: View {
 
             // Volumen + dispositivo
             HStack(spacing: 12) {
+                Button {
+                    showingQueue.toggle()
+                } label: {
+                    Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                }
+                .buttonStyle(.plain)
+                .help("Cola de reproducción")
+                .popover(isPresented: $showingQueue, arrowEdge: .bottom) {
+                    QueueView(player: player)
+                }
+
                 Image(systemName: "speaker.wave.2.fill")
                     .foregroundStyle(.secondary)
                 Slider(value: $volume, in: 0...100) { editing in
@@ -78,7 +90,7 @@ struct PlayerBarView: View {
                 .frame(width: 40)
                 .onTapGesture { Task { await player.loadDevices() } }
             }
-            .frame(maxWidth: 220, alignment: .trailing)
+            .frame(maxWidth: 250, alignment: .trailing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)

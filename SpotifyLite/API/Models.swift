@@ -21,15 +21,21 @@ struct SimplifiedPlaylist: Decodable, Identifiable, Hashable {
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
-struct Artist: Decodable {
+struct Artist: Decodable, Identifiable, Hashable {
     let id: String?
     let name: String
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id && lhs.name == rhs.name }
+    func hash(into hasher: inout Hasher) { hasher.combine(id); hasher.combine(name) }
 }
 
-struct Album: Decodable {
+struct Album: Decodable, Identifiable, Hashable {
     let id: String?
     let name: String
     let images: [SpotifyImage]?
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id && lhs.name == rhs.name }
+    func hash(into hasher: inout Hasher) { hasher.combine(id); hasher.combine(name) }
 }
 
 struct Track: Decodable, Identifiable {
@@ -90,4 +96,33 @@ struct PlaybackState: Decodable {
 
 struct SearchResponse: Decodable {
     let tracks: Paging<Track>?
+}
+
+struct QueueResponse: Decodable {
+    let currentlyPlaying: Track?
+    let queue: [Track]
+}
+
+struct AlbumDetailResponse: Decodable {
+    let id: String
+    let name: String
+    let images: [SpotifyImage]?
+    let artists: [Artist]
+    let releaseDate: String?
+    let totalTracks: Int
+    let uri: String
+    let tracks: Paging<Track>
+}
+
+struct ArtistDetailResponse: Decodable {
+    struct Followers: Decodable { let total: Int }
+
+    let id: String
+    let name: String
+    let images: [SpotifyImage]?
+    let followers: Followers?
+}
+
+struct ArtistTopTracksResponse: Decodable {
+    let tracks: [Track]
 }

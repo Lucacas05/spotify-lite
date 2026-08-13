@@ -35,7 +35,7 @@ struct TrackListView: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
-                            TrackRow(track: track) {
+                            TrackRow(track: track, player: player) {
                                 Task { await player.play(contextURI: contextURI, trackURI: track.uri) }
                             }
                             .onAppear {
@@ -84,27 +84,54 @@ struct TrackListView: View {
 
 struct TrackRow: View {
     let track: Track
+    var player: PlayerStore
+    var showAlbumLink = true
     let onPlay: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            AsyncImage(url: track.artworkURL) { image in
-                image.resizable()
-            } placeholder: {
-                Color.secondary.opacity(0.2)
+            if showAlbumLink, let album = track.album, let albumID = album.id {
+                NavigationLink {
+                    AlbumDetailView(albumID: albumID, albumName: album.name, player: player)
+                } label: {
+                    artwork
+                }
+                .buttonStyle(.plain)
+                .help("Ver álbum \(album.name)")
+            } else {
+                artwork
             }
-            .frame(width: 36, height: 36)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.name)
                     .lineLimit(1)
-                Text(track.artistNames)
+                if let artist = track.artists.first, let artistID = artist.id {
+                    NavigationLink {
+                        ArtistDetailView(artistID: artistID, artistName: artist.name, player: player)
+                    } label: {
+                        Text(track.artistNames)
+                    }
+                    .buttonStyle(.plain)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .help("Ver artista \(artist.name)")
+                } else {
+                    Text(track.artistNames)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             Spacer()
+            Button {
+                Task { await player.playNext(track) }
+            } label: {
+                Image(systemName: "text.line.last.and.arrowtriangle.forward")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Reproducir siguiente")
             Text(track.durationFormatted)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -116,6 +143,17 @@ struct TrackRow: View {
         .onTapGesture(count: 2) { onPlay() }
         .contextMenu {
             Button("Reproducir") { onPlay() }
+            Button("Reproducir siguiente") { Task { await player.playNext(track) } }
         }
+    }
+
+    private var artwork: some View {
+        AsyncImage(url: track.artworkURL) { image in
+            image.resizable()
+        } placeholder: {
+            Color.secondary.opacity(0.2)
+        }
+        .frame(width: 36, height: 36)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 }

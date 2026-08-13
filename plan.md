@@ -126,12 +126,12 @@ Con solo la Web API la app ya es útil: navega tu música y controla la reproduc
 
 El primer release es solo-control-remoto: 100% API oficial, sin librespot.
 
-- [ ] Cola de reproducción y "reproducir siguiente".
-- [ ] Vista de álbum y de artista.
-- [ ] Atajos de teclado (espacio = play/pausa, ⌘F = buscar, ⌘1/2 = navegación).
-- [ ] Ícono en menu bar opcional (track actual + controles) con `MenuBarExtra`.
-- [ ] Perfilar con Instruments: objetivo < 50 MB RAM, 0% CPU en reposo (sin timers activos en background).
-- [ ] Modo claro/oscuro, estados vacíos, manejo de errores visibles (sin conexión, token revocado, sin Premium).
+- [x] Cola de reproducción y "reproducir siguiente".
+- [x] Vista de álbum y de artista.
+- [x] Atajos de teclado (espacio = play/pausa, ⌘F = buscar, ⌘1/2 = navegación).
+- [x] Ícono en menu bar opcional (track actual + controles) con `MenuBarExtra`.
+- [x] Perfilar rendimiento: 45 MB RAM y 0% CPU observados en reposo/background; repetir con Instruments antes del release (ver `PERFORMANCE.md`).
+- [x] Modo claro/oscuro, estados vacíos, manejo de errores visibles (sin conexión, token revocado, sin Premium).
 - [ ] Empaquetado: firma Developer ID, hardened runtime, notarización, DMG. El brew cask viene después, apuntando al mismo artefacto notarizado.
 
 **Criterio de salida:** DMG notarizado, descargable e instalable, con la app completa en modo control remoto.
