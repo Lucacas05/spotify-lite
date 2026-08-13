@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>PROTOTIPO — Navegación por zonas con teclado</title>
+<style>
+  :root {
+    --bg: #121212;
+    --panel: #181818;
+    --panel-2: #1f1f1f;
+    --text: #eaeaea;
+    --muted: #9a9a9a;
+    --accent: #1DB954;
+    --focus-ring: #1DB954;
+    --border: #2a2a2a;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+    padding: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 20px; margin-bottom: 6px; }
+  .intro {
+    color: var(--muted);
+    line-height: 1.5;
+    margin-bottom: 18px;
+    max-width: 72ch;
+  }
+  .intro strong { color: var(--text); }
+
+  /* ---- Mock app layout ---- */
+  .app {
+    display: grid;
+    grid-template-columns: 200px 1fr 220px;
+    grid-template-rows: 48px 340px 72px;
+    grid-template-areas:
+      "search search search"
+      "sidebar list queue"
+      "player player player";
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .zone {
+    background: var(--panel);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    overflow: hidden;
+    position: relative;
+  }
+  .zone.focused { border-color: var(--focus-ring); }
+  .zone .zone-label {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--panel-2);
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+  .zone.focused .zone-label { color: var(--accent); }
+
+  #zone-search { grid-area: search; display: flex; align-items: center; gap: 10px; }
+  #zone-sidebar { grid-area: sidebar; }
+  #zone-list { grid-area: list; }
+  #zone-queue { grid-area: queue; }
+  #zone-player { grid-area: player; display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+  .search-box {
+    flex: 1;
+    background: var(--panel-2);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .search-box.typing { color: var(--text); outline: 1px solid var(--accent); }
+  .search-box .caret { display: inline-block; width: 1px; background: var(--accent); animation: none; }
+
+  .item {
+    padding: 6px 8px;
+    border-radius: 5px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .item.selected { background: var(--panel-2); color: var(--text); }
+  .zone.focused .item.selected { background: rgba(29,185,84,0.18); color: #fff; }
+  .item .sub { font-size: 11px; color: var(--muted); }
+  .item.now-playing::before { content: "▸ "; color: var(--accent); }
+
+  .ctrl {
+    padding: 8px 14px;
+    border-radius: 6px;
+    color: var(--muted);
+    background: var(--panel-2);
+    font-size: 13px;
+  }
+  .zone.focused .ctrl.selected { background: rgba(29,185,84,0.18); color: #fff; outline: 1px solid var(--accent); }
+  .now-playing-label { position: absolute; left: 12px; font-size: 12px; color: var(--muted); max-width: 260px; }
+  .now-playing-label b { color: var(--text); display: block; }
+
+  .empty-note { color: var(--muted); font-style: italic; padding: 6px 8px; }
+  .zone-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 8px; }
+
+  /* ---- State panel ---- */
+  .below {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  .state-panel, .retos {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .state-panel h2, .retos h2 { font-size: 14px; margin-bottom: 10px; }
+  .state-row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--border); }
+  .state-row:last-child { border-bottom: none; }
+  .state-row .k { color: var(--muted); }
+  .state-row .v { font-variant-numeric: tabular-nums; }
+  .state-row .v.accent { color: var(--accent); }
+
+  /* ---- Retos (guided walkthroughs) ---- */
+  .reto-tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  .reto-tab {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .reto-tab.active { color: var(--text); border-color: var(--accent); }
+  .reto-desc { color: var(--muted); line-height: 1.5; margin-bottom: 10px; }
+  .reto-step { padding: 5px 8px; border-radius: 5px; color: var(--muted); display: flex; gap: 8px; align-items: baseline; }
+  .reto-step.done { color: var(--accent); }
+  .reto-step.next { color: var(--text); background: var(--panel-2); }
+  .reto-step .keys { font-family: ui-monospace, monospace; font-size: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+  .reto-step.done .keys { border-color: var(--accent); }
+  .reto-reset {
+    margin-top: 10px;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .reto-complete { color: var(--accent); font-weight: 600; margin-top: 8px; }
+
+  /* ---- Cheatsheet overlay ---- */
+  #cheatsheet {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+  }
+  #cheatsheet.open { display: flex; }
+  .sheet {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px 28px;
+    min-width: 420px;
+  }
+  .sheet h2 { font-size: 16px; margin-bottom: 14px; }
+  .sheet table { width: 100%; border-collapse: collapse; }
+  .sheet td { padding: 4px 0; color: var(--muted); }
+  .sheet td:first-child { width: 130px; }
+  .sheet kbd {
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    color: var(--text);
+  }
+  .sheet .hint { margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .watch { margin-top: 20px; color: var(--muted); line-height: 1.6; max-width: 72ch; }
+  .watch h2 { font-size: 14px; color: var(--text); margin-bottom: 6px; }
+</style>
+</head>
+<body>
+
+<h1>PROTOTIPO — Navegación por zonas con teclado</h1>
+<p class="intro">
+  <strong>La pregunta:</strong> ¿se siente cómodo moverse por un cliente de Spotify usando
+  <strong>zonas de foco</strong> — una tecla por zona (<kbd>1</kbd>–<kbd>4</kbd>, <kbd>/</kbd> para buscar)
+  o <kbd>⌃</kbd>+flechas entre zonas, y flechas dentro de cada zona? Todo aquí se maneja con el
+  teclado real: no hay nada que clickear. Presiona <strong>?</strong> para ver el cheatsheet.
+  Esto es un descartable — la lógica validada se portará a Swift.
+</p>
+
+<div class="app" id="app"></div>
+
+<div class="below">
+  <div class="state-panel">
+    <h2>Estado actual</h2>
+    <div id="state"></div>
+  </div>
+  <div class="retos">
+    <h2>Retos guiados</h2>
+    <div class="reto-tabs" id="reto-tabs"></div>
+    <div id="reto-body"></div>
+  </div>
+</div>
+
+<div class="watch">
+  <h2>Qué observar mientras lo usas</h2>
+  Momentos donde el modelo podría sentirse mal: (1) al abrir una playlist con <kbd>Enter</kbd>, el foco
+  <strong>salta solo</strong> a la lista de canciones — ¿te gusta o te desorienta? (2) escribir en búsqueda:
+  las teclas <kbd>1</kbd>–<kbd>4</kbd> escriben texto en vez de cambiar de zona — ¿es lo que esperabas?
+  (3) en el player, <kbd>←</kbd>/<kbd>→</kbd> mueven el foco entre controles y <kbd>⇧</kbd>+<kbd>←</kbd>/<kbd>→</kbd>
+  hacen seek — ¿o preferirías que las flechas solas hagan seek? Anota lo que te choque: esos son los bugs de la idea.
+</div>
+
+<div id="cheatsheet">
+  <div class="sheet">
+    <h2>Atajos de teclado</h2>
+    <table>
+      <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>Ir a Sidebar / Lista / Cola / Player</td></tr>
+      <tr><td><kbd>/</kbd></td><td>Ir a Búsqueda (modo escritura)</td></tr>
+      <tr><td><kbd>⌃</kbd>+flechas</td><td>Moverse entre zonas espacialmente</td></tr>
+      <tr><td><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd></td><td>Moverse dentro de la zona</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>Activar (abrir playlist, reproducir, botón)</td></tr>
+      <tr><td><kbd>Espacio</kbd></td><td>Play / Pausa (global)</td></tr>
+      <tr><td><kbd>⌫</kbd></td><td>Quitar de la cola (en zona Cola)</td></tr>
+      <tr><td><kbd>⇧</kbd>+<kbd>←</kbd>/<kbd>→</kbd></td><td>Seek −10s / +10s (en zona Player)</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Salir de búsqueda / cerrar este panel</td></tr>
+      <tr><td><kbd>?</kbd></td><td>Abrir / cerrar este panel</td></tr>
+    </table>
+    <p class="hint">Presiona <kbd>Esc</kbd> o <kbd>?</kbd> para cerrar.</p>
+  </div>
+</div>
+
+<!-- ============================================================
+     MÓDULO PURO — la lógica de navegación que se portará a Swift.
+     Sin DOM, sin document: (estado, evento de tecla) => estado.
+     ============================================================ -->
+<script>
+"use strict";
+
+const NavModel = (() => {
+
+  // Datos de juguete — en el app real vienen de la API
+  const PLAYLISTS = [
+    { name: "Inicio", tracks: ["Blinding Lights — The Weeknd", "Levitating — Dua Lipa", "As It Was — Harry Styles", "Flowers — Miley Cyrus", "Starboy — The Weeknd"] },
+    { name: "Tus me gusta", tracks: ["Luna — Zoé", "Labios rotos — Zoé", "Azul — Zoé", "Soñé — Zoé"] },
+    { name: "Focus profundo", tracks: ["Weightless — Marconi Union", "Intro — The xx", "Gymnopédie No.1 — Satie"] },
+    { name: "Gym 2026", tracks: ["Till I Collapse — Eminem", "Stronger — Kanye West", "Eye of the Tiger — Survivor"] },
+    { name: "Peru clásicos", tracks: ["Cariñito — Los Hijos del Sol", "El Condor Pasa — Los Incas", "Mi Serenata — Chabuca Granda"] },
+  ];
+
+  const SEARCH_DB = [
+    "Luna — Zoé", "Luna llena — Residente", "Lunatic — Gazo",
+    "La Luna — Belinda", "Hijo de la Luna — Mecano",
+  ];
+
+  const PLAYER_CONTROLS = ["Anterior", "Play/Pausa", "Siguiente", "Aleatorio", "Volumen"];
+
+  const ZONES = ["search", "sidebar", "list", "queue", "player"];
+
+  // Mapa espacial para ⌃+flechas: [fila superior: sidebar | list | queue], abajo: player, arriba: search
+  const SPATIAL = {
+    search:  { down: "list" },
+    sidebar: { right: "list", down: "player", up: "search" },
+    list:    { left: "sidebar", right: "queue", down: "player", up: "search" },
+    queue:   { left: "list", down: "player", up: "search" },
+    player:  { up: "list" },
+  };
+
+  function initialState() {
+    return {
+      zone: "list",
+      indices: { sidebar: 0, list: 0, queue: 0, player: 1 },
+      openPlaylist: 0,                    // índice en PLAYLISTS
+      listSource: "playlist",             // "playlist" | "search"
+      listTracks: PLAYLISTS[0].tracks.slice(),
+      searchText: "",
+      searchResults: [],
+      queue: ["Levitating — Dua Lipa", "As It Was — Harry Styles"],
+      playing: false,
+      currentTrack: null,
+      positionSec: 0,
+      shuffle: false,
+      cheatsheetOpen: false,
+      lastKey: "—",
+      lastAction: "estado inicial",
+    };
+  }
+
+  function clamp(i, len) { return Math.max(0, Math.min(i, Math.max(0, len - 1))); }
+
+  function zoneLength(state, zone) {
+    switch (zone) {
+      case "sidebar": return PLAYLISTS.length;
+      case "list": return state.listTracks.length;
+      case "queue": return state.queue.length;
+      case "player": return PLAYER_CONTROLS.length;
+      default: return 0;
+    }
+  }
+
+  // El corazón del prototipo: (estado, tecla) => nuevo estado + acción semántica
+  function reduce(state, key) {
+    const s = { ...state, indices: { ...state.indices }, lastKey: key.label };
+
+    const done = (action) => { s.lastAction = action; return s; };
+
+    // --- Cheatsheet abierto: solo se puede cerrar ---
+    if (s.cheatsheetOpen) {
+      if (key.k === "Escape" || key.k === "?") { s.cheatsheetOpen = false; return done("cerrar cheatsheet"); }
+      return done("(cheatsheet abierto — Esc para cerrar)");
+    }
+    if (key.k === "?" && s.zone !== "search") { s.cheatsheetOpen = true; return done("abrir cheatsheet"); }
+
+    // --- Modo escritura en búsqueda: las teclas escriben, no navegan ---
+    if (s.zone === "search") {
+      if (key.k === "Escape") { s.zone = "list"; return done("salir de búsqueda → Lista"); }
+      if (key.k === "ArrowDown" || key.k === "Enter") {
+        if (s.searchResults.length > 0) {
+          s.listSource = "search";
+          s.listTracks = s.searchResults.slice();
+          s.zone = "list";
+          s.indices.list = 0;
+          return done("ir a resultados → Lista");
+        }
+        return done("(sin resultados aún)");
+      }
+      if (key.k === "Backspace") {
+        s.searchText = s.searchText.slice(0, -1);
+        s.searchResults = search(s.searchText);
+        return done("borrar letra");
+      }
+      if (key.printable) {
+        s.searchText += key.k;
+        s.searchResults = search(s.searchText);
+        return done(`escribir "${key.k}"`);
+      }
+      return done("(en búsqueda: escribe, ↓ a resultados, Esc sale)");
+    }
+
+    // --- Saltos directos de zona ---
+    const direct = { "1": "sidebar", "2": "list", "3": "queue", "4": "player" };
+    if (direct[key.k]) { s.zone = direct[key.k]; return done(`ir a zona ${zoneName(s.zone)}`); }
+    if (key.k === "/") { s.zone = "search"; return done("ir a Búsqueda (escribiendo)"); }
+
+    // --- ⌃+flechas: movimiento espacial entre zonas ---
+    if (key.ctrl && key.k.startsWith("Arrow")) {
+      const dir = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" }[key.k];
+      const target = SPATIAL[s.zone][dir];
+      if (target) { s.zone = target; return done(`⌃${dir} → ${zoneName(target)}`); }
+      return done("(no hay zona en esa dirección)");
+    }
+
+    // --- Espacio: play/pausa global ---
+    if (key.k === " ") {
+      if (!s.currentTrack) return done("(nada sonando aún)");
+      s.playing = !s.playing;
+      return done(s.playing ? "reanudar" : "pausar");
+    }
+
+    // --- Dentro de la zona ---
+    const len = zoneLength(s, s.zone);
+    const idx = s.indices[s.zone];
+
+    if (s.zone === "player") {
+      if (key.shift && key.k === "ArrowLeft")  { s.positionSec = Math.max(0, s.positionSec - 10); return done("seek −10s"); }
+      if (key.shift && key.k === "ArrowRight") { s.positionSec += 10; return done("seek +10s"); }
+      if (key.k === "ArrowLeft")  { s.indices.player = clamp(idx - 1, len); return done("foco: " + PLAYER_CONTROLS[s.indices.player]); }
+      if (key.k === "ArrowRight") { s.indices.player = clamp(idx + 1, len); return done("foco: " + PLAYER_CONTROLS[s.indices.player]); }
+      if (key.k === "Enter") return activatePlayerControl(s, done);
+      return done("(en Player: ←→ foco, Enter activa, ⇧←→ seek)");
+    }
+
+    if (key.k === "ArrowUp")   { s.indices[s.zone] = clamp(idx - 1, len); return done("subir"); }
+    if (key.k === "ArrowDown") { s.indices[s.zone] = clamp(idx + 1, len); return done("bajar"); }
+
+    if (key.k === "Enter") {
+      if (s.zone === "sidebar") {
+        s.openPlaylist = idx;
+        s.listSource = "playlist";
+        s.listTracks = PLAYLISTS[idx].tracks.slice();
+        s.indices.list = 0;
+        s.zone = "list"; // ← decisión a validar: el foco salta solo a la lista
+        return done(`abrir "${PLAYLISTS[idx].name}" → foco a Lista`);
+      }
+      if (s.zone === "list") {
+        if (len === 0) return done("(lista vacía)");
+        const track = s.listTracks[idx];
+        s.currentTrack = track;
+        s.playing = true;
+        s.positionSec = 0;
+        s.queue = s.listTracks.slice(idx + 1);
+        return done(`▸ reproducir "${track}"`);
+      }
+      if (s.zone === "queue") {
+        if (len === 0) return done("(cola vacía)");
+        const track = s.queue[idx];
+        s.currentTrack = track;
+        s.playing = true;
+        s.positionSec = 0;
+        s.queue = s.queue.slice(idx + 1);
+        s.indices.queue = 0;
+        return done(`▸ reproducir de la cola "${track}"`);
+      }
+    }
+
+    if (key.k === "Backspace" && s.zone === "queue") {
+      if (len === 0) return done("(cola vacía)");
+      const removed = s.queue[idx];
+      s.queue = s.queue.slice(0, idx).concat(s.queue.slice(idx + 1));
+      s.indices.queue = clamp(idx, s.queue.length);
+      return done(`quitar de la cola "${removed}"`);
+    }
+
+    return done("(tecla sin efecto aquí)");
+  }
+
+  function activatePlayerControl(s, done) {
+    const ctrl = PLAYER_CONTROLS[s.indices.player];
+    switch (ctrl) {
+      case "Play/Pausa":
+        if (!s.currentTrack) return done("(nada sonando aún)");
+        s.playing = !s.playing;
+        return done(s.playing ? "reanudar" : "pausar");
+      case "Siguiente":
+        if (s.queue.length === 0) return done("(cola vacía)");
+        s.currentTrack = s.queue[0];
+        s.queue = s.queue.slice(1);
+        s.playing = true;
+        s.positionSec = 0;
+        return done(`▸ siguiente: "${s.currentTrack}"`);
+      case "Anterior":
+        s.positionSec = 0;
+        return done("volver al inicio de la pista");
+      case "Aleatorio":
+        s.shuffle = !s.shuffle;
+        return done("aleatorio: " + (s.shuffle ? "ON" : "OFF"));
+      case "Volumen":
+        return done("(volumen: sin efecto en el prototipo)");
+    }
+  }
+
+  function search(text) {
+    if (!text.trim()) return [];
+    const t = text.toLowerCase();
+    return SEARCH_DB.filter(x => x.toLowerCase().includes(t));
+  }
+
+  function zoneName(z) {
+    return { search: "Búsqueda", sidebar: "Sidebar", list: "Lista", queue: "Cola", player: "Player" }[z];
+  }
+
+  return { initialState, reduce, zoneName, PLAYLISTS, PLAYER_CONTROLS };
+})();
+</script>
+
+<!-- ============================================================
+     PÁGINA DESCARTABLE — shell fino que traduce eventos DOM
+     a datos planos, llama al módulo puro y re-renderiza.
+     ============================================================ -->
+<script>
+"use strict";
+
+let state = NavModel.initialState();
+
+// ---- Retos guiados: cada paso matchea contra la acción semántica ----
+const RETOS = [
+  {
+    name: "Flujo básico",
+    desc: "Abre una playlist desde el sidebar y reproduce una canción, todo sin mouse. Fíjate cómo el foco salta solo del sidebar a la lista al abrir.",
+    steps: [
+      { keys: "1", label: "Ve al Sidebar", match: a => a === "ir a zona Sidebar" },
+      { keys: "↓ ↓", label: "Baja hasta \"Focus profundo\"", match: (a, s) => s.zone === "sidebar" && s.indices.sidebar === 2 },
+      { keys: "Enter", label: "Ábrela (mira el salto de foco)", match: a => a.startsWith("abrir \"Focus profundo\"") },
+      { keys: "↓", label: "Baja a la segunda canción", match: (a, s) => s.zone === "list" && s.indices.list === 1 },
+      { keys: "Enter", label: "Reprodúcela", match: a => a.startsWith("▸ reproducir") },
+      { keys: "Espacio", label: "Pausa desde donde estés", match: a => a === "pausar" },
+    ],
+  },
+  {
+    name: "Buscar",
+    desc: "Busca \"luna\" y reproduce un resultado. El caso incómodo: mientras escribes, las teclas 1–4 escriben texto en vez de cambiar de zona. ¿Se siente natural entrar y salir con / y Esc?",
+    steps: [
+      { keys: "/", label: "Entra a búsqueda", match: a => a === "ir a Búsqueda (escribiendo)" },
+      { keys: "l u n a", label: "Escribe \"luna\"", match: (a, s) => s.zone === "search" && s.searchText.toLowerCase().includes("luna") },
+      { keys: "↓", label: "Salta a los resultados", match: a => a === "ir a resultados → Lista" },
+      { keys: "↓ ↓", label: "Baja al tercer resultado", match: (a, s) => s.zone === "list" && s.indices.list === 2 },
+      { keys: "Enter", label: "Reprodúcelo", match: a => a.startsWith("▸ reproducir") },
+    ],
+  },
+  {
+    name: "Cola",
+    desc: "Maneja la cola sin mouse: reproduce algo, revisa qué viene y quita una canción. La cola se rellena con lo que sigue de la lista.",
+    steps: [
+      { keys: "2", label: "Ve a la Lista", match: a => a === "ir a zona Lista" },
+      { keys: "Enter", label: "Reproduce la canción seleccionada", match: a => a.startsWith("▸ reproducir") },
+      { keys: "3", label: "Ve a la Cola", match: a => a === "ir a zona Cola" },
+      { keys: "⌫", label: "Quita la primera de la cola", match: a => a.startsWith("quitar de la cola") },
+      { keys: "Enter", label: "Reproduce la que quedó primera", match: a => a.startsWith("▸ reproducir de la cola") },
+    ],
+  },
+  {
+    name: "Player y seek",
+    desc: "Controla el player: muévete entre botones con ←→ y haz seek con ⇧←→. Pregunta clave: ¿preferirías que ←→ solas hagan seek?",
+    steps: [
+      { keys: "2 → Enter", label: "Reproduce algo (2, Enter)", match: a => a.startsWith("▸ reproducir") },
+      { keys: "4", label: "Ve al Player", match: a => a === "ir a zona Player" },
+      { keys: "→", label: "Mueve el foco a Siguiente", match: (a, s) => s.zone === "player" && s.indices.player === 2 },
+      { keys: "Enter", label: "Salta a la siguiente canción", match: a => a.startsWith("▸ siguiente") },
+      { keys: "⇧ →", label: "Adelanta 10 segundos", match: a => a === "seek +10s" },
+      { keys: "⌃ ↑", label: "Vuelve a la Lista con ⌃+flecha", match: a => a.endsWith("→ Lista") },
+    ],
+  },
+];
+
+let activeReto = 0;
+let retoProgress = 0;
+
+function selectReto(i) {
+  activeReto = i;
+  retoProgress = 0;
+  state = NavModel.initialState();
+  render();
+}
+
+function checkReto(action) {
+  const reto = RETOS[activeReto];
+  if (retoProgress >= reto.steps.length) return;
+  const step = reto.steps[retoProgress];
+  if (step.match(action, state)) retoProgress++;
+}
+
+// ---- Traducción de eventos DOM a datos planos para el módulo puro ----
+document.addEventListener("keydown", (e) => {
+  if (e.metaKey) return; // dejar pasar Cmd+R, Cmd+Q, etc.
+  const printable = e.key.length === 1 && !e.ctrlKey && !e.altKey;
+  const navKeys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Escape", "Backspace", " ", "?", "/"];
+  if (!printable && !navKeys.includes(e.key)) return;
+  e.preventDefault();
+
+  const label =
+    (e.ctrlKey ? "⌃" : "") + (e.shiftKey ? "⇧" : "") +
+    ({ " ": "Espacio", ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→", Backspace: "⌫" }[e.key] || e.key);
+
+  state = NavModel.reduce(state, {
+    k: e.key,
+    ctrl: e.ctrlKey,
+    shift: e.shiftKey,
+    printable,
+    label,
+  });
+  checkReto(state.lastAction);
+  render();
+});
+
+// ---- Render ----
+const appEl = document.getElementById("app");
+
+function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+
+function render() {
+  const z = state.zone;
+  const focused = (name) => name === z ? "zone focused" : "zone";
+  const sel = (zoneKey, i) => state.indices[zoneKey] === i ? "item selected" : "item";
+
+  const sidebar = NavModel.PLAYLISTS.map((p, i) =>
+    `<div class="${sel("sidebar", i)}${i === state.openPlaylist ? "" : ""}">${esc(p.name)}</div>`).join("");
+
+  const listTitle = state.listSource === "search"
+    ? `Resultados: "${esc(state.searchText)}"`
+    : esc(NavModel.PLAYLISTS[state.openPlaylist].name);
+  const list = state.listTracks.length
+    ? state.listTracks.map((t, i) =>
+        `<div class="${sel("list", i)}${t === state.currentTrack ? " now-playing" : ""}">${esc(t)}</div>`).join("")
+    : `<div class="empty-note">Sin canciones</div>`;
+
+  const queue = state.queue.length
+    ? state.queue.map((t, i) => `<div class="${sel("queue", i)}">${esc(t)}</div>`).join("")
+    : `<div class="empty-note">Cola vacía</div>`;
+
+  const controls = NavModel.PLAYER_CONTROLS.map((c, i) => {
+    let label = c;
+    if (c === "Play/Pausa") label = state.playing ? "⏸" : "▶";
+    if (c === "Anterior") label = "⏮";
+    if (c === "Siguiente") label = "⏭";
+    if (c === "Aleatorio") label = "🔀" + (state.shuffle ? " ON" : "");
+    if (c === "Volumen") label = "🔊";
+    return `<div class="ctrl ${state.indices.player === i ? "selected" : ""}">${label}</div>`;
+  }).join("");
+
+  const np = state.currentTrack
+    ? `<b>${esc(state.currentTrack)}</b>${state.playing ? "sonando" : "en pausa"} · ${fmtTime(state.positionSec)}`
+    : "Nada sonando";
+
+  appEl.innerHTML = `
+    <div id="zone-search" class="${focused("search")}">
+      <span class="zone-label">/ Búsqueda</span>
+      <div class="search-box ${z === "search" ? "typing" : ""}">
+        ${state.searchText ? esc(state.searchText) : (z === "search" ? "escribe para buscar…" : "🔍 Buscar")}${z === "search" ? '<span class="caret">&nbsp;</span>' : ""}
+      </div>
+    </div>
+    <div id="zone-sidebar" class="${focused("sidebar")}">
+      <span class="zone-label">1</span>
+      <div class="zone-title">Playlists</div>${sidebar}
+    </div>
+    <div id="zone-list" class="${focused("list")}">
+      <span class="zone-label">2</span>
+      <div class="zone-title">${listTitle}</div>${list}
+    </div>
+    <div id="zone-queue" class="${focused("queue")}">
+      <span class="zone-label">3</span>
+      <div class="zone-title">Cola</div>${queue}
+    </div>
+    <div id="zone-player" class="${focused("player")}">
+      <span class="zone-label">4</span>
+      <div class="now-playing-label">${np}</div>
+      ${controls}
+    </div>`;
+
+  renderState();
+  renderRetos();
+  document.getElementById("cheatsheet").className = state.cheatsheetOpen ? "open" : "";
+}
+
+function fmtTime(s) {
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+
+function renderState() {
+  const rows = [
+    ["Zona con foco", NavModel.zoneName(state.zone), true],
+    ["Última tecla", state.lastKey],
+    ["Última acción", state.lastAction, true],
+    ["Sonando", state.currentTrack ? `${state.currentTrack} (${state.playing ? "▶" : "⏸"} ${fmtTime(state.positionSec)})` : "—"],
+    ["Canciones en cola", String(state.queue.length)],
+    ["Texto de búsqueda", state.searchText || "—"],
+  ];
+  document.getElementById("state").innerHTML = rows.map(([k, v, accent]) =>
+    `<div class="state-row"><span class="k">${k}</span><span class="v ${accent ? "accent" : ""}">${esc(String(v))}</span></div>`).join("");
+}
+
+function renderRetos() {
+  document.getElementById("reto-tabs").innerHTML = RETOS.map((r, i) =>
+    `<button class="reto-tab ${i === activeReto ? "active" : ""}" onclick="selectReto(${i})">${r.name}</button>`).join("");
+
+  const reto = RETOS[activeReto];
+  const complete = retoProgress >= reto.steps.length;
+  document.getElementById("reto-body").innerHTML = `
+    <p class="reto-desc">${reto.desc}</p>
+    ${reto.steps.map((s, i) => `
+      <div class="reto-step ${i < retoProgress ? "done" : i === retoProgress ? "next" : ""}">
+        <span class="keys">${s.keys}</span><span>${s.label}</span>${i < retoProgress ? "<span>✓</span>" : ""}
+      </div>`).join("")}
+    ${complete ? `<div class="reto-complete">✓ Reto completado</div>` : ""}
+    <button class="reto-reset" onclick="selectReto(${activeReto})">Reiniciar reto</button>`;
+}
+
+render();
+</script>
+</body>
+</html>
