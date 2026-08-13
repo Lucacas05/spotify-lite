@@ -22,6 +22,9 @@ targets:
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
         INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Lucas Sotomayor Barrios. MIT License."
         CODE_SIGN_STYLE: Automatic
+    scheme:
+      testTargets:
+        - SpotifyLiteTests
   SpotifyLiteTests:
     type: bundle.unit-test
     platform: macOS

@@ -4,6 +4,9 @@ struct PlayerBarView: View {
     var player: PlayerStore
     @State private var volume: Double = 50
     @State private var showingQueue = false
+    @State private var isScrubbing = false
+    @State private var scrubProgressMs = 0.0
+    @State private var scrubbingTrackID: String?
 
     var body: some View {
         HStack(spacing: 16) {
@@ -26,24 +29,35 @@ struct PlayerBarView: View {
                         .lineLimit(1)
                 }
             }
-            .frame(maxWidth: 260, alignment: .leading)
+            .frame(minWidth: 180, idealWidth: 220, maxWidth: 260, alignment: .leading)
+            .layoutPriority(2)
 
             Spacer()
 
-            // Controles
-            HStack(spacing: 20) {
-                Button { Task { await player.previous() } } label: {
-                    Image(systemName: "backward.fill")
+            VStack(spacing: 6) {
+                // Controles
+                HStack(spacing: 20) {
+                    Button { Task { await player.previous() } } label: {
+                        Image(systemName: "backward.fill")
+                    }
+                    Button { Task { await player.togglePlayPause() } } label: {
+                        Image(systemName: (player.state?.isPlaying ?? false) ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 32))
+                    }
+                    Button { Task { await player.next() } } label: {
+                        Image(systemName: "forward.fill")
+                    }
                 }
-                Button { Task { await player.togglePlayPause() } } label: {
-                    Image(systemName: (player.state?.isPlaying ?? false) ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 32))
+                .buttonStyle(.plain)
+
+                TimelineView(.periodic(from: .now, by: 0.2)) { context in
+                    progressSlider(at: context.date)
                 }
-                Button { Task { await player.next() } } label: {
-                    Image(systemName: "forward.fill")
-                }
+                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.plain)
+            .frame(minWidth: 180, maxWidth: 420)
+            .frame(maxWidth: .infinity)
+            .layoutPriority(1)
 
             Spacer()
 
@@ -98,6 +112,77 @@ struct PlayerBarView: View {
         .onChange(of: player.state?.device?.volumePercent) { _, newValue in
             if let newValue { volume = Double(newValue) }
         }
+        .onChange(of: player.currentTrackIdentifier) { _, _ in
+            guard isScrubbing else { return }
+            // Si Spotify cambió de canción mientras se arrastraba, cancelar scrub local.
+            isScrubbing = false
+            scrubbingTrackID = nil
+        }
         .task { await player.loadDevices() }
+    }
+
+    private func progressSlider(at date: Date) -> some View {
+        let durationMs = max(player.state?.item?.durationMs ?? 0, 0)
+        let sliderUpperBound = Double(max(durationMs, 1))
+        let liveProgressMs = player.progress(at: date)
+        let displayedProgressMs = min(
+            max(Int((isScrubbing ? scrubProgressMs : Double(liveProgressMs)).rounded()), 0),
+            durationMs
+        )
+
+        return VStack(spacing: 2) {
+            Slider(
+                value: Binding(
+                    get: { isScrubbing ? scrubProgressMs : Double(liveProgressMs) },
+                    set: { newValue in
+                        beginScrubIfNeeded()
+                        scrubProgressMs = min(max(newValue, 0), Double(durationMs))
+                    }
+                ),
+                in: 0...sliderUpperBound,
+                onEditingChanged: handleScrubEditing
+            )
+            .disabled(durationMs <= 0)
+            .frame(minWidth: 160, maxWidth: .infinity)
+            .help("Posición de reproducción")
+
+            HStack {
+                Text(formatTime(milliseconds: displayedProgressMs))
+                Spacer()
+                Text(formatTime(milliseconds: durationMs))
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+        }
+    }
+
+    private func beginScrubIfNeeded() {
+        guard !isScrubbing else { return }
+        isScrubbing = true
+        scrubbingTrackID = player.currentTrackIdentifier
+    }
+
+    private func handleScrubEditing(_ isEditing: Bool) {
+        if isEditing {
+            if !isScrubbing {
+                isScrubbing = true
+                scrubbingTrackID = player.currentTrackIdentifier
+                scrubProgressMs = Double(player.progress())
+            }
+            return
+        }
+
+        isScrubbing = false
+        let targetMs = Int(scrubProgressMs.rounded())
+        let startedTrackID = scrubbingTrackID
+        scrubbingTrackID = nil
+        guard startedTrackID == player.currentTrackIdentifier else { return }
+        Task { await player.seek(to: targetMs, expectedTrackID: startedTrackID) }
+    }
+
+    private func formatTime(milliseconds: Int) -> String {
+        let seconds = max(milliseconds, 0) / 1000
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 }

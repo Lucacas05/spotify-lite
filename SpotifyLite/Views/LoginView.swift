@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct LoginView: View {
@@ -16,7 +17,23 @@ struct LoginView: View {
             Text("SpotifyLite")
                 .font(.largeTitle.bold())
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
+                Link("Crea una app en el Spotify Developer Dashboard",
+                     destination: URL(string: "https://developer.spotify.com/dashboard")!)
+                    .font(.callout)
+
+                HStack(spacing: 8) {
+                    Text(SpotifyAuthConfig.redirectURI)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                    Button("Copiar URI") { copyRedirectURI() }
+                        .buttonStyle(.borderless)
+                }
+                Text("Registra esa Redirect URI exactamente. No uses localhost ni un Client Secret: el login es PKCE.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: 360, alignment: .leading)
+
                 TextField("Client ID de Spotify", text: $auth.clientID)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 320)
@@ -47,5 +64,10 @@ struct LoginView: View {
         }
         .padding(40)
         .frame(minWidth: 600, minHeight: 400)
+    }
+
+    private func copyRedirectURI() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(SpotifyAuthConfig.redirectURI, forType: .string)
     }
 }

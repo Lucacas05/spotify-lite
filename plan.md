@@ -134,8 +134,8 @@ Antes de preparar el DMG, se publicará una beta técnica ejecutable desde el cl
 - [x] Ícono en menu bar opcional (track actual + controles) con `MenuBarExtra`.
 - [x] Perfilar rendimiento: 45 MB RAM y 0% CPU observados en reposo/background; repetir con Instruments antes del release (ver `PERFORMANCE.md`).
 - [x] Modo claro/oscuro, estados vacíos, manejo de errores visibles (sin conexión, token revocado, sin Premium).
-- [ ] Barra de tiempo interactiva para la canción en reproducción: mostrar tiempo transcurrido y duración, interpolar el progreso entre consultas, permitir arrastrar para hacer seek y reconciliar después con el estado confirmado por Spotify.
-- [ ] Beta técnica desde el clon: README, requisitos, configuración de OAuth/Client ID y pasos reproducibles para ejecutar la app.
+- [x] Barra de tiempo interactiva para la canción en reproducción: mostrar tiempo transcurrido y duración, interpolar el progreso entre consultas, permitir arrastrar para hacer seek y reconciliar después con el estado confirmado por Spotify.
+- [x] Beta técnica desde el clon: README, requisitos, configuración de OAuth/Client ID y pasos reproducibles para ejecutar la app.
 - [ ] Empaquetado posterior a la beta técnica: firma Developer ID, hardened runtime, notarización y DMG. El brew cask viene después, apuntando al mismo artefacto notarizado.
 
 **Criterio de salida:** primero, beta técnica reproducible desde el clon; después, DMG notarizado, descargable e instalable, con la app completa en modo control remoto.

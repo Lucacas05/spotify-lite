@@ -121,4 +121,268 @@ final class SpotifyModelsTests: XCTestCase {
             "user-library-read"
         ]))
     }
+
+    func testProgressInterpolatesOnlyWhilePlaying() {
+        var state = PlaybackProgressState()
+        let start = Date(timeIntervalSince1970: 1_000)
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 200_000,
+            progressMs: 10_000,
+            isPlaying: true,
+            receivedAt: start
+        )
+
+        XCTAssertEqual(state.progress(at: start.addingTimeInterval(1.5)), 11_500)
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 200_000,
+            progressMs: 25_000,
+            isPlaying: false,
+            receivedAt: start.addingTimeInterval(2)
+        )
+
+        XCTAssertEqual(state.progress(at: start.addingTimeInterval(8)), 25_000)
+    }
+
+    func testProgressIsClampedToDurationBounds() {
+        var state = PlaybackProgressState()
+        let start = Date(timeIntervalSince1970: 2_000)
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 3_000,
+            progressMs: 2_900,
+            isPlaying: true,
+            receivedAt: start
+        )
+
+        XCTAssertEqual(state.progress(at: start.addingTimeInterval(3)), 3_000)
+    }
+
+    func testPendingSeekHoldsOptimisticValueUntilRemoteCatchesUp() {
+        var state = PlaybackProgressState()
+        let start = Date(timeIntervalSince1970: 3_000)
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 180_000,
+            progressMs: 20_000,
+            isPlaying: true,
+            receivedAt: start
+        )
+        state.applyLocalSeek(
+            trackID: "track-1",
+            durationMs: 180_000,
+            targetMs: 90_000,
+            isPlaying: true,
+            at: start.addingTimeInterval(0.1)
+        )
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 180_000,
+            progressMs: 21_000,
+            isPlaying: true,
+            receivedAt: start.addingTimeInterval(0.8)
+        )
+
+        XCTAssertEqual(state.progress(at: start.addingTimeInterval(1.1)), 91_000)
+    }
+
+    func testPendingSeekIsReconciledWhenRemotePositionMatches() {
+        var state = PlaybackProgressState()
+        let start = Date(timeIntervalSince1970: 4_000)
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 180_000,
+            progressMs: 20_000,
+            isPlaying: true,
+            receivedAt: start
+        )
+        state.applyLocalSeek(
+            trackID: "track-1",
+            durationMs: 180_000,
+            targetMs: 90_000,
+            isPlaying: true,
+            at: start.addingTimeInterval(0.1)
+        )
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 180_000,
+            progressMs: 90_400,
+            isPlaying: true,
+            receivedAt: start.addingTimeInterval(1)
+        )
+
+        XCTAssertNil(state.pendingSeek)
+        XCTAssertEqual(state.progress(at: start.addingTimeInterval(1.2)), 90_600)
+    }
+
+    func testTrackChangeClearsPendingSeekAndUsesNewRemoteProgress() {
+        var state = PlaybackProgressState()
+        let start = Date(timeIntervalSince1970: 5_000)
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 180_000,
+            progressMs: 20_000,
+            isPlaying: true,
+            receivedAt: start
+        )
+        state.applyLocalSeek(
+            trackID: "track-1",
+            durationMs: 180_000,
+            targetMs: 90_000,
+            isPlaying: true,
+            at: start.addingTimeInterval(0.1)
+        )
+
+        state.applyRemoteState(
+            trackID: "track-2",
+            durationMs: 120_000,
+            progressMs: 1_000,
+            isPlaying: true,
+            receivedAt: start.addingTimeInterval(0.5)
+        )
+
+        XCTAssertEqual(state.trackID, "track-2")
+        XCTAssertNil(state.pendingSeek)
+        XCTAssertEqual(state.progress(at: start.addingTimeInterval(0.6)), 1_100)
+    }
+
+    func testCancelPendingSeekClearsOptimisticStateForImmediateReconciliation() {
+        var state = PlaybackProgressState()
+        let start = Date(timeIntervalSince1970: 6_000)
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 180_000,
+            progressMs: 20_000,
+            isPlaying: true,
+            receivedAt: start
+        )
+        state.applyLocalSeek(
+            trackID: "track-1",
+            durationMs: 180_000,
+            targetMs: 90_000,
+            isPlaying: true,
+            at: start.addingTimeInterval(0.1)
+        )
+        state.cancelPendingSeek()
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 180_000,
+            progressMs: 21_000,
+            isPlaying: true,
+            receivedAt: start.addingTimeInterval(0.2)
+        )
+
+        XCTAssertNil(state.pendingSeek)
+        XCTAssertEqual(state.progress(at: start.addingTimeInterval(0.2)), 21_000)
+    }
+
+    func testCancelPendingSeekIsNoOpWhenNoPendingSeekExists() {
+        var state = PlaybackProgressState()
+        let start = Date(timeIntervalSince1970: 7_000)
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 120_000,
+            progressMs: 30_000,
+            isPlaying: false,
+            receivedAt: start
+        )
+        state.cancelPendingSeek()
+
+        XCTAssertNil(state.pendingSeek)
+        XCTAssertEqual(state.progress(at: start.addingTimeInterval(5)), 30_000)
+    }
+
+    func testPendingSeekReconcilesWhenRemoteMatchesInterpolatedProgress() {
+        var state = PlaybackProgressState()
+        let start = Date(timeIntervalSince1970: 8_000)
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 180_000,
+            progressMs: 20_000,
+            isPlaying: true,
+            receivedAt: start
+        )
+        state.applyLocalSeek(
+            trackID: "track-1",
+            durationMs: 180_000,
+            targetMs: 90_000,
+            isPlaying: true,
+            at: start
+        )
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 180_000,
+            progressMs: 92_000,
+            isPlaying: true,
+            receivedAt: start.addingTimeInterval(2)
+        )
+
+        XCTAssertNil(state.pendingSeek)
+        XCTAssertEqual(state.progress(at: start.addingTimeInterval(2.25)), 92_250)
+    }
+
+    func testPendingSeekExpiresAfterTimeoutEvenIfRemoteIsStale() {
+        var state = PlaybackProgressState()
+        let start = Date(timeIntervalSince1970: 9_000)
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 180_000,
+            progressMs: 20_000,
+            isPlaying: true,
+            receivedAt: start
+        )
+        state.applyLocalSeek(
+            trackID: "track-1",
+            durationMs: 180_000,
+            targetMs: 90_000,
+            isPlaying: true,
+            at: start.addingTimeInterval(0.1)
+        )
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 180_000,
+            progressMs: 21_000,
+            isPlaying: true,
+            receivedAt: start.addingTimeInterval(3.2)
+        )
+
+        XCTAssertNil(state.pendingSeek)
+        XCTAssertEqual(state.progress(at: start.addingTimeInterval(3.2)), 21_000)
+    }
+
+    func testPlaybackStatusFreezeStopsInterpolationUntilResume() {
+        var state = PlaybackProgressState()
+        let start = Date(timeIntervalSince1970: 10_000)
+
+        state.applyRemoteState(
+            trackID: "track-1",
+            durationMs: 180_000,
+            progressMs: 10_000,
+            isPlaying: true,
+            receivedAt: start
+        )
+        state.applyPlaybackStatus(isPlaying: false, at: start.addingTimeInterval(1))
+
+        XCTAssertEqual(state.progress(at: start.addingTimeInterval(5)), 11_000)
+
+        state.applyPlaybackStatus(isPlaying: true, at: start.addingTimeInterval(5))
+
+        XCTAssertEqual(state.progress(at: start.addingTimeInterval(6.5)), 12_500)
+    }
 }
