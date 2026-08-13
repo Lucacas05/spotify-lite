@@ -105,7 +105,16 @@ private struct PlaybackScrubber: View {
     @State private var hovering = false
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.2)) { context in
+        // Pause when idle: an unconditional 0.2s TimelineView was ~15% CPU
+        // even with the window hidden. Scrubbing uses local @State, not ticks.
+        TimelineView(.animation(
+            minimumInterval: PlaybackScrubberTimeline.tickSeconds,
+            paused: PlaybackScrubberTimeline.isPaused(
+                isPlaying: player.state?.isPlaying ?? false,
+                durationMs: player.state?.item?.durationMs ?? 0,
+                isScrubbing: isScrubbing
+            )
+        )) { context in
             let durationMs = max(player.state?.item?.durationMs ?? 0, 0)
             let live = player.progress(at: context.date)
             let displayed = min(
