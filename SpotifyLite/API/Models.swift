@@ -53,6 +53,13 @@ struct Track: Decodable, Identifiable {
         let sorted = images.sorted { ($0.width ?? 0) < ($1.width ?? 0) }
         return (sorted.first { ($0.width ?? 0) >= 64 } ?? sorted.last).flatMap { URL(string: $0.url) }
     }
+
+    var highResolutionArtworkURL: URL? {
+        guard let images = album?.images, !images.isEmpty else { return nil }
+        return images
+            .max(by: { ($0.width ?? 0) < ($1.width ?? 0) })
+            .flatMap { URL(string: $0.url) }
+    }
     var durationFormatted: String {
         let seconds = durationMs / 1000
         return String(format: "%d:%02d", seconds / 60, seconds % 60)

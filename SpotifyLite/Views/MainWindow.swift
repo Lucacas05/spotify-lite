@@ -83,13 +83,12 @@ struct MainWindow: View {
         .task {
             profile = try? await SpotifyClient.shared.get("me")
             avatarImage = await Self.loadAvatar(from: profile?.avatarURL)
-            player.startPolling()
+            player.setSceneActive(true)
         }
         .onChange(of: scenePhase) { _, phase in
-            // No timers in the background: 0% CPU at idle.
-            if phase == .active { player.startPolling() } else { player.stopPolling() }
+            player.setSceneActive(phase == .active)
         }
-        .onDisappear { player.stopPolling() }
+        .onDisappear { player.setSceneActive(false) }
     }
 
     @ViewBuilder

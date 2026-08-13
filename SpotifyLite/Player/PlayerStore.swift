@@ -9,8 +9,26 @@ struct LocalPlaybackError: LocalizedError {
 }
 
 enum PlaybackPollingPolicy {
+    static let foregroundPlayingIntervalSeconds = 5
+    static let foregroundIdleIntervalSeconds = 30
+    static let backgroundLocalPlaybackIntervalSeconds = 30
+
     static func intervalSeconds(isPlaying: Bool) -> Int {
-        isPlaying ? 5 : 30
+        isPlaying ? foregroundPlayingIntervalSeconds : foregroundIdleIntervalSeconds
+    }
+
+    /// `nil` means polling should stop. Background polling continues at 30 s
+    /// only while the last confirmed active device is SpotifyLite.
+    static func intervalSeconds(
+        isPlaying: Bool,
+        isSceneActive: Bool,
+        isLocalDeviceActive: Bool
+    ) -> Int? {
+        if isSceneActive {
+            return intervalSeconds(isPlaying: isPlaying)
+        }
+        guard isLocalDeviceActive else { return nil }
+        return backgroundLocalPlaybackIntervalSeconds
     }
 }
 
@@ -148,8 +166,11 @@ final class PlayerStore {
     var volumePercent: Int = 50
 
     let localEngine = LibrespotEngine()
+    @ObservationIgnored
+    let nowPlaying: NowPlayingBridge
 
     private var pollTask: Task<Void, Never>?
+    private var pollGeneration = 0
     private var progressState = PlaybackProgressState()
     private var seekRequestID = 0
     private var queueState = QueueRefreshState()
@@ -162,6 +183,16 @@ final class PlayerStore {
     var queueError: String? { queueState.lastError }
     var queuePresentation: QueuePresentation { queueState.presentation }
 
+    private var isSceneActive = false
+    private(set) var lastConfirmedDeviceName: String?
+
+    init(nowPlaying: NowPlayingBridge? = nil) {
+        self.nowPlaying = nowPlaying ?? NowPlayingBridge()
+        self.nowPlaying.onCommand = { [weak self] command in
+            Task { await self?.handleNowPlayingCommand(command) }
+        }
+    }
+
     var currentTrackIdentifier: String? {
         state?.item?.id ?? state?.item?.uri
     }
@@ -170,22 +201,36 @@ final class PlayerStore {
         state?.shuffleState ?? false
     }
 
+    var isLocalDeviceActive: Bool {
+        lastConfirmedDeviceName == LibrespotEngine.deviceName
+    }
+
+    func setSceneActive(_ active: Bool) {
+        let changed = isSceneActive != active
+        isSceneActive = active
+        guard changed else { return }
+        reconcilePolling()
+    }
+
     func startPolling() {
         guard pollTask == nil else { return }
+        guard nextPollIntervalSeconds() != nil else { return }
+        pollGeneration += 1
+        let generation = pollGeneration
         pollTask = Task {
             while !Task.isCancelled {
                 await refresh()
-                // Keep playback responsive, but avoid 720 requests/hour while
-                // paused or empty. Scene-inactive polling is stopped entirely.
-                let seconds = PlaybackPollingPolicy.intervalSeconds(
-                    isPlaying: state?.isPlaying ?? false
-                )
+                guard let seconds = nextPollIntervalSeconds() else { break }
                 try? await Task.sleep(for: .seconds(seconds))
+            }
+            if pollGeneration == generation {
+                pollTask = nil
             }
         }
     }
 
     func stopPolling() {
+        pollGeneration += 1
         pollTask?.cancel()
         pollTask = nil
     }
@@ -194,6 +239,7 @@ final class PlayerStore {
         do {
             let refreshedState: PlaybackState? = try await SpotifyClient.shared.getOptional("me/player")
             state = refreshedState
+            updateLastConfirmedDeviceName(from: refreshedState)
             let now = Date()
             progressState.applyRemoteState(
                 trackID: refreshedState?.item?.id ?? refreshedState?.item?.uri,
@@ -206,6 +252,7 @@ final class PlayerStore {
                 volumePercent = volume
             }
             lastError = nil
+            publishNowPlaying()
         } catch {
             lastError = error.localizedDescription
         }
@@ -216,10 +263,39 @@ final class PlayerStore {
         devices = response?.devices ?? []
     }
 
+    func play() async {
+        progressState.applyPlaybackStatus(isPlaying: true, at: Date())
+        publishNowPlaying()
+        await run { try await SpotifyClient.shared.command("PUT", "me/player/play") }
+    }
+
+    func pause() async {
+        progressState.applyPlaybackStatus(isPlaying: false, at: Date())
+        publishNowPlaying()
+        await run { try await SpotifyClient.shared.command("PUT", "me/player/pause") }
+    }
+
     func togglePlayPause() async {
-        let playing = state?.isPlaying ?? false
-        progressState.applyPlaybackStatus(isPlaying: !playing, at: Date())
-        await run { try await SpotifyClient.shared.command("PUT", playing ? "me/player/pause" : "me/player/play") }
+        if progressState.isPlaying {
+            await pause()
+        } else {
+            await play()
+        }
+    }
+
+    func handleNowPlayingCommand(_ command: NowPlayingCommand) async {
+        switch command {
+        case .play:
+            await play()
+        case .pause:
+            await pause()
+        case .toggle:
+            await togglePlayPause()
+        case .previous:
+            await previous()
+        case .next:
+            await next()
+        }
     }
 
     func next() async {
@@ -351,6 +427,7 @@ final class PlayerStore {
     func playOnThisMac() async {
         guard let device = await ensureLocalDevice() else { return }
         await transferPlayback(to: device)
+        reconcilePolling()
     }
 
     /// Starts librespot (if needed) and waits until it registers as a Connect
@@ -384,10 +461,32 @@ final class PlayerStore {
 
     func stopLocalPlayback() {
         localEngine.stop()
+        publishNowPlaying()
+        reconcilePolling()
+    }
+
+    func handleSignOut() {
+        stopLocalPlayback()
+        stopPolling()
+        state = nil
+        lastConfirmedDeviceName = nil
+        nowPlaying.clear()
+    }
+
+    func play(contextURI: String?, trackURI: String? = nil) async {
+        await playContext(contextURI: contextURI, trackURI: trackURI, uris: nil)
+    }
+
+    func play(trackURI: String) async {
+        await playContext(contextURI: nil, trackURI: trackURI, uris: nil)
+    }
+
+    func play(uris: [String]) async {
+        await playContext(contextURI: nil, trackURI: nil, uris: uris)
     }
 
     /// Play a context (playlist/album) starting at a track, or loose tracks.
-    func play(contextURI: String? = nil, trackURI: String? = nil, uris: [String]? = nil) async {
+    private func playContext(contextURI: String?, trackURI: String?, uris: [String]?) async {
         var body: [String: Any] = [:]
         if let contextURI {
             body["context_uri"] = contextURI
@@ -419,6 +518,42 @@ final class PlayerStore {
 
     func progress(at date: Date = .now) -> Int {
         progressState.progress(at: date)
+    }
+
+    private func publishNowPlaying() {
+        nowPlaying.sync(
+            isLocalEngineRunning: localEngine.isRunning,
+            activeDeviceName: state?.device?.name ?? lastConfirmedDeviceName,
+            track: state?.item,
+            progressMs: progressState.progress(at: Date()),
+            isPlaying: progressState.isPlaying
+        )
+    }
+
+    private func updateLastConfirmedDeviceName(from refreshedState: PlaybackState?) {
+        if let name = refreshedState?.device?.name {
+            lastConfirmedDeviceName = name
+        } else if refreshedState != nil {
+            lastConfirmedDeviceName = nil
+        } else if !localEngine.isRunning {
+            lastConfirmedDeviceName = nil
+        }
+    }
+
+    private func nextPollIntervalSeconds() -> Int? {
+        PlaybackPollingPolicy.intervalSeconds(
+            isPlaying: state?.isPlaying ?? false,
+            isSceneActive: isSceneActive,
+            isLocalDeviceActive: isLocalDeviceActive
+        )
+    }
+
+    private func reconcilePolling() {
+        if nextPollIntervalSeconds() == nil {
+            stopPolling()
+        } else if pollTask == nil {
+            startPolling()
+        }
     }
 
     private func run(

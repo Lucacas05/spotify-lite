@@ -76,6 +76,7 @@ final class SpotifyModelsTests: XCTestCase {
         XCTAssertEqual(track.artistNames, "First Artist, Second Artist")
         XCTAssertEqual(track.durationFormatted, "3:05")
         XCTAssertEqual(track.artworkURL?.absoluteString, "https://example.com/small.jpg")
+        XCTAssertEqual(track.highResolutionArtworkURL?.absoluteString, "https://example.com/large.jpg")
     }
 
     func testPlaylistDetailUsesItemWrapperRequiredByCurrentAPI() throws {

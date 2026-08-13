@@ -14,6 +14,8 @@ targets:
           - "**/*.html"
           - "Views/Prototype"
           - "Views/Prototype/**"
+    dependencies:
+      - sdk: MediaPlayer.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lucas.spotifylite
