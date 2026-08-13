@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct PlayerBarView: View {
     var player: PlayerStore
@@ -28,6 +29,9 @@ struct PlayerBarView: View {
             .padding(.top, 6)
         }
         .background(.bar)
+        .onChange(of: player.volumePercent) { _, newValue in
+            volume = Double(newValue)
+        }
         .onChange(of: player.state?.device?.volumePercent) { _, newValue in
             if let newValue { volume = Double(newValue) }
         }
@@ -60,6 +64,7 @@ struct PlayerBarView: View {
             }
             .buttonStyle(.plain)
             .help(player.isShuffling ? "Disable shuffle" : "Enable shuffle")
+            .keyboardNavigable(focus: .player(.shuffle), handleActivate: false)
 
             Button { Task { await player.previous() } } label: {
                 Image(systemName: "backward.end.fill")
@@ -70,6 +75,7 @@ struct PlayerBarView: View {
             }
             .buttonStyle(.plain)
             .help("Previous")
+            .keyboardNavigable(focus: .player(.previous), handleActivate: false)
 
             Button { Task { await player.togglePlayPause() } } label: {
                 Image(systemName: (player.state?.isPlaying ?? false) ? "pause.fill" : "play.fill")
@@ -81,6 +87,7 @@ struct PlayerBarView: View {
             }
             .buttonStyle(.plain)
             .help("Play or pause")
+            .keyboardNavigable(focus: .player(.playPause), handleActivate: false)
 
             Button { Task { await player.next() } } label: {
                 Image(systemName: "forward.end.fill")
@@ -91,6 +98,7 @@ struct PlayerBarView: View {
             }
             .buttonStyle(.plain)
             .help("Next")
+            .keyboardNavigable(focus: .player(.next), handleActivate: false)
         }
         .fixedSize()
     }
@@ -196,10 +204,10 @@ private struct PlaybackScrubber: View {
 
 private struct PlayerQueueButton: View {
     var player: PlayerStore
-    @State private var showingQueue = false
+    @Environment(KeyboardController.self) private var keyboard
 
     var body: some View {
-        Button { showingQueue.toggle() } label: {
+        Button { keyboard.setQueueOpen(!keyboard.navigation.queueOpen) } label: {
             Image(systemName: "list.bullet")
                 .font(.system(size: 13, weight: .semibold))
                 .frame(width: 28, height: 28)
@@ -207,9 +215,17 @@ private struct PlayerQueueButton: View {
         }
         .buttonStyle(.plain)
         .help("Playback queue")
-        .popover(isPresented: $showingQueue, arrowEdge: .bottom) {
+        .keyboardNavigable(focus: .player(.queue), handleActivate: false)
+        .popover(isPresented: queuePresented, arrowEdge: .bottom) {
             QueueView(player: player)
         }
+    }
+
+    private var queuePresented: Binding<Bool> {
+        Binding(
+            get: { keyboard.navigation.queueOpen },
+            set: { keyboard.setQueueOpen($0) }
+        )
     }
 }
 
@@ -250,6 +266,7 @@ private struct PlayerVolumeSlider: View {
             .frame(width: 96, height: 28)
         }
         .help("Volume")
+        .keyboardNavigable(focus: .player(.volume), handleActivate: false)
     }
 
     private var volumeIcon: String {
@@ -262,38 +279,11 @@ private struct PlayerVolumeSlider: View {
 
 private struct PlayerDeviceMenu: View {
     var player: PlayerStore
+    @State private var hostView: NSView?
 
     var body: some View {
         Menu {
-            Button {
-                Task { await player.playOnThisMac() }
-            } label: {
-                HStack {
-                    Text(player.localEngine.status == .starting
-                         ? "Starting local player…" : "Play on this Mac")
-                    if player.localEngine.isRunning { Image(systemName: "checkmark") }
-                }
-            }
-            .disabled(player.localEngine.status == .starting)
-            if player.localEngine.isRunning {
-                Button("Stop local player") { player.stopLocalPlayback() }
-            }
-            Divider()
-            if player.devices.isEmpty {
-                Text("No active devices")
-            }
-            ForEach(player.devices) { device in
-                Button {
-                    Task { await player.transferPlayback(to: device) }
-                } label: {
-                    HStack {
-                        Text(device.name)
-                        if device.isActive { Image(systemName: "checkmark") }
-                    }
-                }
-            }
-            Divider()
-            Button("Refresh devices") { Task { await player.loadDevices() } }
+            deviceMenuItems
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "hifispeaker")
@@ -311,7 +301,127 @@ private struct PlayerDeviceMenu: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Output device")
+        .keyboardNavigable(focus: .player(.devices), handleActivate: false)
+        .background(NSViewCapture { hostView = $0 })
         .onTapGesture { Task { await player.loadDevices() } }
+        .onReceive(NotificationCenter.default.publisher(for: .openPlayerDeviceMenu)) { _ in
+            presentDeviceMenu()
+        }
+        .onKeyPress(.return) {
+            presentDeviceMenu()
+            return .handled
+        }
+    }
+
+    @ViewBuilder
+    private var deviceMenuItems: some View {
+        Button {
+            Task { await player.playOnThisMac() }
+        } label: {
+            HStack {
+                Text(player.localEngine.status == .starting
+                     ? "Starting local player…" : "Play on this Mac")
+                if player.localEngine.isRunning { Image(systemName: "checkmark") }
+            }
+        }
+        .disabled(player.localEngine.status == .starting)
+        if player.localEngine.isRunning {
+            Button("Stop local player") { player.stopLocalPlayback() }
+        }
+        Divider()
+        if player.devices.isEmpty {
+            Text("No active devices")
+        }
+        ForEach(player.devices) { device in
+            Button {
+                Task { await player.transferPlayback(to: device) }
+            } label: {
+                HStack {
+                    Text(device.name)
+                    if device.isActive { Image(systemName: "checkmark") }
+                }
+            }
+        }
+        Divider()
+        Button("Refresh devices") { Task { await player.loadDevices() } }
+    }
+
+    private func presentDeviceMenu() {
+        let menu = NSMenu()
+        let playLocal = NSMenuItem(
+            title: player.localEngine.status == .starting ? "Starting local player…" : "Play on this Mac",
+            action: #selector(DeviceMenuTarget.playOnThisMac),
+            keyEquivalent: ""
+        )
+        playLocal.isEnabled = player.localEngine.status != .starting
+        menu.addItem(playLocal)
+        if player.localEngine.isRunning {
+            menu.addItem(NSMenuItem(
+                title: "Stop local player",
+                action: #selector(DeviceMenuTarget.stopLocal),
+                keyEquivalent: ""
+            ))
+        }
+        menu.addItem(.separator())
+        if player.devices.isEmpty {
+            let empty = NSMenuItem(title: "No active devices", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        }
+        for (index, device) in player.devices.enumerated() {
+            let title = device.isActive ? "✓ \(device.name)" : device.name
+            let item = NSMenuItem(
+                title: title,
+                action: #selector(DeviceMenuTarget.transfer(_:)),
+                keyEquivalent: ""
+            )
+            item.tag = index
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(
+            title: "Refresh devices",
+            action: #selector(DeviceMenuTarget.refresh),
+            keyEquivalent: ""
+        ))
+        let target = DeviceMenuTarget(player: player)
+        for item in menu.items where item.action != nil {
+            item.target = target
+        }
+        objc_setAssociatedObject(menu, &deviceMenuTargetKey, target, .OBJC_ASSOCIATION_RETAIN)
+        if let hostView {
+            let point = NSPoint(x: 0, y: hostView.bounds.height)
+            menu.popUp(positioning: nil, at: point, in: hostView)
+        } else {
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        }
+    }
+}
+
+private var deviceMenuTargetKey: UInt8 = 0
+
+private final class DeviceMenuTarget: NSObject {
+    let player: PlayerStore
+    init(player: PlayerStore) { self.player = player }
+
+    @objc func playOnThisMac() {
+        Task { @MainActor in await player.playOnThisMac() }
+    }
+
+    @objc func stopLocal() {
+        Task { @MainActor in player.stopLocalPlayback() }
+    }
+
+    @objc func transfer(_ sender: NSMenuItem) {
+        let index = sender.tag
+        Task { @MainActor in
+            guard player.devices.indices.contains(index) else { return }
+            await player.transferPlayback(to: player.devices[index])
+        }
+    }
+
+    @objc func refresh() {
+        Task { @MainActor in await player.loadDevices() }
     }
 }
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 enum TrackListSource: Equatable {
     /// First page comes from GET /playlists/{id}; later pages are
@@ -20,6 +21,7 @@ struct TrackListView: View {
     @State private var loadedItemCount = 0
     @State private var loading = false
     @State private var error: String?
+    @Environment(KeyboardController.self) private var keyboard
 
     private var contextURI: String? {
         if case .playlist(let id) = source { return "spotify:playlist:\(id)" }
@@ -48,32 +50,42 @@ struct TrackListView: View {
                     ContentUnavailableView("No songs", systemImage: "music.note")
                 }
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        header
-                        ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
-                            TrackRow(track: track, player: player) {
-                                Task { await player.play(contextURI: contextURI, trackURI: track.uri) }
-                            }
-                            .onAppear {
-                                // Fallback for slow connections or an interrupted
-                                // preload: request the next page before hitting the bottom.
-                                if index >= tracks.count - 30 {
-                                    Task { await loadMore() }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            header
+                            ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
+                                TrackRow(track: track, player: player, keyboardIndex: index) {
+                                    Task { await player.play(contextURI: contextURI, trackURI: track.uri) }
                                 }
+                                .id(index)
+                                .onAppear {
+                                    // Fallback for slow connections or an interrupted
+                                    // preload: request the next page before hitting the bottom.
+                                    if index >= tracks.count - 30 {
+                                        Task { await loadMore() }
+                                    }
+                                }
+                                Divider().padding(.leading, 56)
                             }
-                            Divider().padding(.leading, 56)
+                            if loading { ProgressView().padding() }
                         }
-                        if loading { ProgressView().padding() }
+                        // Keep the last row fully above the player bar,
+                        // which lives outside this ScrollView.
+                        .padding(.bottom, 72)
                     }
-                    // Keep the last row fully above the player bar,
-                    // which lives outside this ScrollView.
-                    .padding(.bottom, 72)
+                    .onChange(of: keyboard.navigation.listIndex) { _, index in
+                        if keyboard.navigation.zone == .list {
+                            proxy.scrollTo(index, anchor: .center)
+                        }
+                    }
                 }
             }
         }
         .navigationTitle(title)
         .navigationSubtitle(total > 0 ? "\(total) songs" : "")
+        .onAppear { registerKeyboardList() }
+        .onChange(of: tracks.count) { _, _ in registerKeyboardList() }
         .task(id: source) {
             tracks = []
             total = 0
@@ -81,6 +93,12 @@ struct TrackListView: View {
             error = nil
             await loadMore()
             await preloadRemainingPlaylistItems()
+        }
+    }
+
+    private func registerKeyboardList() {
+        keyboard.registerList(tracks: tracks) { track in
+            Task { await player.play(contextURI: contextURI, trackURI: track.uri) }
         }
     }
 
@@ -248,10 +266,20 @@ struct TrackRow: View {
     let track: Track
     var player: PlayerStore
     var showAlbumLink = true
+    var keyboardIndex: Int? = nil
+    var keyboardZone: FocusZone = .list
     let onPlay: () -> Void
+
+    @Environment(KeyboardController.self) private var keyboard
+    @State private var rowView: NSView?
 
     private var isCurrent: Bool {
         player.state?.isCurrentTrack(track) ?? false
+    }
+
+    private var isKeyboardSelected: Bool {
+        guard let keyboardIndex else { return false }
+        return keyboard.isSelected(zone: keyboardZone, index: keyboardIndex)
     }
 
     var body: some View {
@@ -308,18 +336,41 @@ struct TrackRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background {
-            if isCurrent {
+            if isKeyboardSelected {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.green.opacity(0.18))
+            } else if isCurrent {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(Color.green.opacity(0.12))
             }
         }
+        .keyboardSelected(isKeyboardSelected)
         .contentShape(Rectangle())
         .accessibilityAddTraits(isCurrent ? .isSelected : [])
         .accessibilityValue(isCurrent ? "Now playing" : "")
         .onTapGesture(count: 2) { onPlay() }
-        .contextMenu {
-            Button("Play") { onPlay() }
-            Button("Play next") { Task { await player.playNext(track) } }
+        .contextMenu { trackMenuItems }
+        .background(NSViewCapture { rowView = $0 })
+        .modifier(TrackRowKeyboard(index: keyboardIndex, zone: keyboardZone))
+        .onReceive(NotificationCenter.default.publisher(for: .openFocusedTrackMenu)) { _ in
+            guard isKeyboardSelected else { return }
+            NativeContextMenu.present(from: rowView)
+        }
+    }
+
+    @ViewBuilder
+    private var trackMenuItems: some View {
+        Button("Play") { onPlay() }
+        Button("Play next") { Task { await player.playNext(track) } }
+        if showAlbumLink, let album = track.album, let albumID = album.id {
+            NavigationLink("View album") {
+                AlbumDetailView(albumID: albumID, albumName: album.name, player: player)
+            }
+        }
+        if let artist = track.artists.first, let artistID = artist.id {
+            NavigationLink("View artist") {
+                ArtistDetailView(artistID: artistID, artistName: artist.name, player: player)
+            }
         }
     }
 
@@ -331,5 +382,18 @@ struct TrackRow: View {
         }
         .frame(width: 36, height: 36)
         .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+}
+
+private struct TrackRowKeyboard: ViewModifier {
+    var index: Int?
+    var zone: FocusZone
+
+    func body(content: Content) -> some View {
+        if let index {
+            content.keyboardNavigable(focus: zone == .queue ? .queueRow(index) : .listRow(index))
+        } else {
+            content
+        }
     }
 }

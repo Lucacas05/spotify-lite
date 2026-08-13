@@ -138,7 +138,40 @@ xcodebuild test -project SpotifyLite.xcodeproj -scheme SpotifyLite \
   -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
 ```
 
-They cover PKCE, tokens, OAuth scopes, and the main Web API payloads.
+They cover PKCE, tokens, OAuth scopes, Web API payloads, and keyboard navigation.
+
+## Keyboard shortcuts
+
+The app is fully usable from the keyboard. Focus lives in one of five zones: Search, Sidebar, Track list, Queue (popover), and Player.
+
+| Keys | Action |
+|---|---|
+| `1` `2` `3` `4` | Focus sidebar / track list / queue (toggle) / player |
+| `/` or `⌘F` | Focus search (typing mode; digits type into the field) |
+| `⌃` + arrows | Move between zones spatially |
+| `↑` `↓` `←` `→` | Move inside the current zone |
+| `Enter` | Activate (open playlist, play track, press the focused player control) |
+| `Space` | Play / pause (global, except while typing in search) |
+| `Esc` | Leave search, close the queue popover, or close an overlay |
+| `⇧←` `⇧→` | Seek −10s / +10s (player zone) |
+| `n` `p` `s` | Next / previous / shuffle |
+| `a` | Add the selected track to the queue |
+| `m` | Open the selected track’s context menu |
+| `+` `-` | Volume up / down |
+| `⌘K` | Command palette (playlists, tracks, playback, devices) |
+| `?` | Keyboard shortcut cheatsheet |
+
+`⌘1` / `⌘2` are intentionally unbound so the number keys have a single meaning.
+
+System media keys (F8 / F9 / F10) still control playback. There are no other global (out-of-app) shortcuts.
+
+### Customize keybinds
+
+Shortcuts are **not** editable in the UI. They live in one table: `SpotifyLite/Keyboard/KeyMap.swift` (`KeyMap.bindings`). Views depend on named actions (`playPause`, `focusSidebar`, …), never on raw keys.
+
+If you use an AI coding agent, paste this prompt:
+
+> I want to customize SpotifyLite keyboard shortcuts. Ask me which actions to remap and which keys to use, one question at a time if anything is ambiguous. Then edit only `KeyMap.bindings` in `SpotifyLite/Keyboard/KeyMap.swift`. Do not rename `KeyboardAction` cases, and do not change `NavigationModel` or the views unless a new action is required. Keep `⌘F` (search) and `Space` (play/pause) unless I explicitly ask to move those. After editing, confirm the cheatsheet still lists the new chords (it reads from `KeyMap`) and run `KeyboardNavigationTests`.
 
 ## Troubleshooting
 
