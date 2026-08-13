@@ -23,6 +23,18 @@ NOTARY_PROFILE="spotifylite-notary" \
 
 El script genera `build/release/SpotifyLite-<versión>.dmg` y su SHA-256. Archiva en Release, firma con Hardened Runtime, notariza y grapa tanto la app como el DMG, y valida el resultado con `codesign`, `stapler` y `spctl`.
 
+## Tests automatizados
+
+Antes de crear el DMG:
+
+```bash
+xcodegen generate
+xcodebuild test -project SpotifyLite.xcodeproj -scheme SpotifyLite \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
+```
+
+La suite cubre PKCE, expiración y persistencia serializada de tokens, scopes de OAuth y decodificación de los payloads principales de Spotify.
+
 ## Validación manual antes de publicar
 
 - Instalar el DMG en una cuenta de macOS donde SpotifyLite nunca se haya ejecutado.

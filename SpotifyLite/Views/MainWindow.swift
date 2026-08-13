@@ -107,7 +107,11 @@ struct MainWindow: View {
             Button("Reproducir o pausar") { Task { await player.togglePlayPause() } }
                 .keyboardShortcut(.space, modifiers: [])
         }
-        .hidden()
+        // `hidden()` también desactiva los keyboard shortcuts. Mantener estos
+        // botones en la jerarquía de interacción, pero fuera del layout y AX.
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .accessibilityHidden(true)
     }
 
     private func errorBanner(_ message: String) -> some View {
