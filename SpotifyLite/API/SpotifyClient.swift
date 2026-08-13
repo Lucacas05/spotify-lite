@@ -33,6 +33,15 @@ actor SpotifyClient {
         return decoder
     }()
 
+    /// Fresh access token for handing to the librespot child process.
+    func validAccessToken() async throws -> String {
+        guard var tokens = KeychainStore.load() else { throw SpotifyAPIError.notSignedIn }
+        if tokens.isExpired {
+            tokens = try await refreshTokens(tokens)
+        }
+        return tokens.accessToken
+    }
+
     func get<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
         guard let value: T = try await getOptional(path, query: query) else {
             throw SpotifyAPIError.emptyResponse

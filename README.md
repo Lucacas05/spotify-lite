@@ -70,7 +70,28 @@ user-read-private
 streaming
 ```
 
-`streaming` is reserved for experimental local playback (not in this beta yet). Remote control uses the `user-*-playback-state` and `user-read-currently-playing` scopes.
+`streaming` is used by local playback (see below). Remote control uses the `user-*-playback-state` and `user-read-currently-playing` scopes.
+
+## Local playback (play on this Mac)
+
+The app can play audio by itself, with no official Spotify client open anywhere. It launches [librespot](https://github.com/librespot-org/librespot) as a child process that registers this Mac as a Spotify Connect device named **SpotifyLite**, then transfers playback to it. Audio goes straight to CoreAudio.
+
+1. Install librespot once:
+
+   ```bash
+   brew install librespot
+   ```
+
+2. In the player bar, open the device menu (speaker icon) and click **Play on this Mac**.
+
+Details:
+
+- librespot authenticates with the app's own OAuth token (`streaming` scope); there is no second login and no credentials outside your machine.
+- Requires **Premium** (librespot limitation).
+- The child process stops when you quit the app or click **Stop local player**.
+- Its credential cache lives in `~/Library/Application Support/SpotifyLite/librespot` with owner-only permissions.
+
+**Note:** librespot is an unofficial client and its use is against Spotify's terms of service (same as Psst, ncspot, etc.). In practice it is tolerated, but there is a theoretical risk to the account. That is why it is opt-in and the binary is installed by you, not shipped with the app.
 
 ## Premium
 

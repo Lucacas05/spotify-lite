@@ -134,6 +134,8 @@ final class PlayerStore {
     private(set) var queueIsLoading = false
     var lastError: String?
 
+    let localEngine = LibrespotEngine()
+
     private var pollTask: Task<Void, Never>?
     private var progressState = PlaybackProgressState()
     private var seekRequestID = 0
@@ -270,6 +272,36 @@ final class PlayerStore {
     func transferPlayback(to device: Device) async {
         guard let id = device.id else { return }
         await run { try await SpotifyClient.shared.command("PUT", "me/player", body: ["device_ids": [id]]) }
+    }
+
+    /// Starts the local librespot engine and moves playback to this Mac, so the
+    /// app works standalone with no official Spotify client open anywhere.
+    func playOnThisMac() async {
+        await localEngine.start()
+        guard localEngine.isRunning else {
+            if case .failed(let message) = localEngine.status { lastError = message }
+            return
+        }
+
+        // The new Connect device takes a moment to register with Spotify.
+        for attempt in 0..<10 {
+            try? await Task.sleep(for: .seconds(attempt == 0 ? 1.5 : 1))
+            await loadDevices()
+            if let device = devices.first(where: { $0.name == LibrespotEngine.deviceName }) {
+                await transferPlayback(to: device)
+                return
+            }
+            if !localEngine.isRunning { break }
+        }
+        if case .failed(let message) = localEngine.status {
+            lastError = message
+        } else {
+            lastError = "The local player started but never showed up as a Spotify device. Try again."
+        }
+    }
+
+    func stopLocalPlayback() {
+        localEngine.stop()
     }
 
     /// Play a context (playlist/album) starting at a track, or loose tracks.

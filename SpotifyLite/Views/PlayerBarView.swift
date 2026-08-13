@@ -82,6 +82,20 @@ struct PlayerBarView: View {
                 .frame(width: 100)
 
                 Menu {
+                    Button {
+                        Task { await player.playOnThisMac() }
+                    } label: {
+                        HStack {
+                            Text(player.localEngine.status == .starting
+                                 ? "Starting local player…" : "Play on this Mac")
+                            if player.localEngine.isRunning { Image(systemName: "checkmark") }
+                        }
+                    }
+                    .disabled(player.localEngine.status == .starting)
+                    if player.localEngine.isRunning {
+                        Button("Stop local player") { player.stopLocalPlayback() }
+                    }
+                    Divider()
                     if player.devices.isEmpty {
                         Text("No active devices")
                     }

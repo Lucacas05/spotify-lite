@@ -15,6 +15,11 @@ struct SpotifyLiteApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(auth: auth, player: player)
+                .onReceive(NotificationCenter.default.publisher(
+                    for: NSApplication.willTerminateNotification)) { _ in
+                    // Don't leave the librespot child playing after the app quits.
+                    player.stopLocalPlayback()
+                }
         }
 
         MenuBarExtra(isInserted: $menuBarEnabled) {
