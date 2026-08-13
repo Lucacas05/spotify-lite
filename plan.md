@@ -84,25 +84,25 @@ SpotifyLite/
 
 ### Fase 0 — Setup del proyecto (½ día)
 
-- [ ] Crear proyecto Xcode: app macOS, SwiftUI, bundle id `com.lucas.spotifylite`.
-- [ ] Sin App Sandbox (necesario para lanzar el librespot externo del usuario); Hardened Runtime activado. Distribución: Developer ID + notarización, fuera del App Store.
-- [ ] Registrar la app en el Spotify Developer Dashboard y guardar el Client ID.
+- [x] Crear proyecto Xcode: app macOS, SwiftUI, bundle id `com.lucas.spotifylite`.
+- [x] Sin App Sandbox (necesario para lanzar el librespot externo del usuario); Hardened Runtime activado. Distribución: Developer ID + notarización, fuera del App Store.
+- [x] Registrar la app en el Spotify Developer Dashboard y guardar el Client ID.
 
 ### Fase 1 — Login con OAuth de Spotify (1–2 días)
 
 El corazón de lo que pediste: al pulsar "Iniciar sesión", se abre la página oficial de Spotify; el usuario se autentica ahí y Spotify redirige de vuelta a la app.
 
-- [ ] `PKCE.swift`: generar `code_verifier` (64 chars aleatorios) y `code_challenge` (SHA256 + base64url) con CryptoKit.
-- [ ] `AuthManager.login()`:
+- [x] `PKCE.swift`: generar `code_verifier` (64 chars aleatorios) y `code_challenge` (SHA256 + base64url) con CryptoKit.
+- [x] `AuthManager.login()`:
   - Construir URL de `https://accounts.spotify.com/authorize` con `client_id`, `response_type=code`, `redirect_uri=http://127.0.0.1:<puerto>/callback`, `code_challenge_method=S256`, `code_challenge` y `scope`.
   - Scopes: `user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative user-library-read user-read-private streaming`.
   - Levantar un mini servidor HTTP local efímero en `127.0.0.1` (Network.framework) y abrir la URL en el navegador por defecto con `NSWorkspace.open` (si ya hay sesión de Spotify en el navegador, es un clic).
   - En el callback HTTP, extraer `code`, responder una página de "vuelve a la app" y apagar el servidor.
-- [ ] `AuthManager.exchangeCode()`: `POST https://accounts.spotify.com/api/token` con `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier`. Respuesta: `access_token` (expira en 1 h) + `refresh_token`.
-- [ ] `KeychainStore`: guardar ambos tokens en el Keychain.
-- [ ] Refresh automático: interceptor en `SpotifyClient` que renueva el token cuando expira (o ante un 401) con `grant_type=refresh_token`, serializado con un actor para evitar refreshes concurrentes.
-- [ ] `LoginView`: pantalla inicial con botón "Iniciar sesión con Spotify"; al completar, pasar a `MainWindow`.
-- [ ] Logout: borrar Keychain y volver a `LoginView`.
+- [x] `AuthManager.exchangeCode()`: `POST https://accounts.spotify.com/api/token` con `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier`. Respuesta: `access_token` (expira en 1 h) + `refresh_token`.
+- [x] `KeychainStore`: guardar ambos tokens en el Keychain.
+- [x] Refresh automático: interceptor en `SpotifyClient` que renueva el token cuando expira (o ante un 401) con `grant_type=refresh_token`, serializado con un actor para evitar refreshes concurrentes.
+- [x] `LoginView`: pantalla inicial con botón "Iniciar sesión con Spotify"; al completar, pasar a `MainWindow`.
+- [x] Logout: borrar Keychain y volver a `LoginView`.
 
 **Criterio de salida:** abrir la app → login en la página de Spotify → la app muestra tu nombre de usuario (`GET /me`) y sobrevive reinicios sin pedir login de nuevo.
 
