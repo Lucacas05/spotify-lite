@@ -16,26 +16,25 @@ struct MainWindow: View {
     @AppStorage("appearance") private var appearance = "system"
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(library: library, player: player, selection: $selection)
-                .navigationSplitViewColumnWidth(min: 180, ideal: 220)
-        } detail: {
-            NavigationStack {
-                detailView
-                    .toolbar {
-                        ToolbarItem(placement: .primaryAction) {
-                            accountMenu
+        VStack(spacing: 0) {
+            NavigationSplitView {
+                SidebarView(library: library, player: player, selection: $selection)
+                    .navigationSplitViewColumnWidth(min: 180, ideal: 220)
+            } detail: {
+                NavigationStack {
+                    detailView
+                        .toolbar {
+                            ToolbarItem(placement: .primaryAction) {
+                                accountMenu
+                            }
                         }
-                    }
-            }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                if let error = player.lastError {
-                    errorBanner(error)
                 }
-                PlayerBarView(player: player)
             }
+
+            if let error = player.lastError {
+                errorBanner(error)
+            }
+            PlayerBarView(player: player)
         }
         .overlay {
             if keyboard.navigation.commandPaletteOpen {
@@ -47,7 +46,7 @@ struct MainWindow: View {
         }
         .preferredColorScheme(colorScheme)
         .background { GlobalKeyboardShortcuts(keyboard: keyboard) }
-        // Applied after safeAreaInset/overlay so PlayerBarView and the
+        // Applied to the outer layout so PlayerBarView and the
         // palette/cheatsheet subtrees also see the controller.
         .environment(keyboard)
         .environment(\.appFocus, $focus)

@@ -94,9 +94,6 @@ struct TrackListView: View {
                                 ProgressView().padding()
                             }
                         }
-                        // Keep the last row fully above the player bar,
-                        // which lives outside this ScrollView.
-                        .padding(.bottom, 72)
                     }
                     .onChange(of: keyboard.navigation.listIndex) { _, index in
                         if keyboard.navigation.zone == .list {
