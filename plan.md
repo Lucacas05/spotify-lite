@@ -126,15 +126,19 @@ Con solo la Web API la app ya es útil: navega tu música y controla la reproduc
 
 El primer release es solo-control-remoto: 100% API oficial, sin librespot.
 
+Antes de preparar el DMG, se publicará una beta técnica ejecutable desde el clon del repositorio. Esto permite seguir iterando y recibir feedback sin bloquear el avance por la firma y notarización. El repositorio deberá incluir instrucciones reproducibles para configurar el proyecto, registrar el redirect URI de Spotify, introducir el Client ID y ejecutar la app.
+
 - [x] Cola de reproducción y "reproducir siguiente".
 - [x] Vista de álbum y de artista.
 - [x] Atajos de teclado (espacio = play/pausa, ⌘F = buscar, ⌘1/2 = navegación).
 - [x] Ícono en menu bar opcional (track actual + controles) con `MenuBarExtra`.
 - [x] Perfilar rendimiento: 45 MB RAM y 0% CPU observados en reposo/background; repetir con Instruments antes del release (ver `PERFORMANCE.md`).
 - [x] Modo claro/oscuro, estados vacíos, manejo de errores visibles (sin conexión, token revocado, sin Premium).
-- [ ] Empaquetado: firma Developer ID, hardened runtime, notarización, DMG. El brew cask viene después, apuntando al mismo artefacto notarizado.
+- [ ] Barra de tiempo interactiva para la canción en reproducción: mostrar tiempo transcurrido y duración, interpolar el progreso entre consultas, permitir arrastrar para hacer seek y reconciliar después con el estado confirmado por Spotify.
+- [ ] Beta técnica desde el clon: README, requisitos, configuración de OAuth/Client ID y pasos reproducibles para ejecutar la app.
+- [ ] Empaquetado posterior a la beta técnica: firma Developer ID, hardened runtime, notarización y DMG. El brew cask viene después, apuntando al mismo artefacto notarizado.
 
-**Criterio de salida:** DMG notarizado, descargable e instalable, con la app completa en modo control remoto.
+**Criterio de salida:** primero, beta técnica reproducible desde el clon; después, DMG notarizado, descargable e instalable, con la app completa en modo control remoto.
 
 ### Fase 4 — Playback local con librespot externo (2–3 días, post-release)
 
