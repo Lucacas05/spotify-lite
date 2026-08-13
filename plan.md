@@ -110,15 +110,17 @@ El corazón de lo que pediste: al pulsar "Iniciar sesión", se abre la página o
 
 Con solo la Web API la app ya es útil: navega tu música y controla la reproducción en cualquier dispositivo activo (el cliente oficial, un parlante). Todo esto es 100% API oficial.
 
-- [ ] `SpotifyClient`: capa genérica `request<T: Codable>` con auth header, decodificación, manejo de 401 (refresh) y 429 (respetar `Retry-After`).
-- [ ] Modelos `Codable` mínimos: `Track`, `Album`, `Artist`, `Playlist`, `PlaybackState`, `Device`.
-- [ ] `SidebarView`: playlists del usuario (`GET /me/playlists`, paginado) + Liked Songs.
-- [ ] `PlaylistDetailView`: tracks con `LazyVStack` (playlists de miles de canciones sin costo de memoria), carátulas con caché (`URLCache` configurado, ~50 MB en disco).
-- [ ] `SearchView`: `GET /search` con debounce de 300 ms.
-- [ ] `PlayerBarView`: track actual, play/pausa, siguiente/anterior, volumen, selector de dispositivo (`GET /me/player/devices`).
-- [ ] Estado de reproducción: polling de `GET /me/player` cada 5 s cuando la ventana está activa (pausar el polling en background para no gastar CPU).
+- [x] `SpotifyClient`: capa genérica `request<T: Codable>` con auth header, decodificación, manejo de 401 (refresh) y 429 (respetar `Retry-After`).
+- [x] Modelos `Codable` mínimos: `Track`, `Album`, `Artist`, `Playlist`, `PlaybackState`, `Device`.
+- [x] `SidebarView`: playlists del usuario (`GET /me/playlists`, paginado) + Liked Songs.
+- [x] `PlaylistDetailView`: tracks con `LazyVStack` (playlists de miles de canciones sin costo de memoria), carátulas con caché (`URLCache` configurado, ~50 MB en disco).
+- [x] `SearchView`: `GET /search` con debounce de 300 ms.
+- [x] `PlayerBarView`: track actual, play/pausa, siguiente/anterior, volumen, selector de dispositivo (`GET /me/player/devices`).
+- [x] Estado de reproducción: polling de `GET /me/player` cada 5 s cuando la ventana está activa (pausar el polling en background para no gastar CPU).
 
 **Criterio de salida:** buscar una canción, sonarla en el dispositivo activo, controlar play/pausa/volumen desde la app.
+
+> **Nota (descubierto en Fase 2, ago 2026):** las apps en dev mode registradas desde 2025 tienen límites no documentados en la Web API: `/search` acepta `limit` ≤ 10, `/me/tracks` ≤ 50, y `/playlists/{id}/tracks` devuelve 403 — hay que usar `GET /playlists/{id}`, que trae todos los tracks de una vez con cada track envuelto en la clave `item` (no `track`). Verificado con curl; implementado en `TrackListView`/`SearchView`.
 
 ### Fase 3 — Pulido, rendimiento y primer release (2–3 días)
 
