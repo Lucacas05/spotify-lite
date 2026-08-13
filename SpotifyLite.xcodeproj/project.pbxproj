@@ -25,6 +25,10 @@
 		98A031442E08A55B8AEBFFC5 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 359EB2BF5D9EB6481E849DA7 /* ContentView.swift */; };
 		9AFEC9374BEC5E47ABFF04B6 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34BD33DC508D2CD638AD29D8 /* LoginView.swift */; };
 		A1762DBACBA1C6D52674AFE6 /* LibrespotLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EAA4741E8A0EEEC9B8AB57B /* LibrespotLocator.swift */; };
+		B81C0E11A11E7110E11F11E1 /* LibrespotProcessLifetime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A81C0E11A11E7110E11F11E1 /* LibrespotProcessLifetime.swift */; };
+		B81C0E11A11E7110E11F11E4 /* LibrespotProcessLifetimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A81C0E11A11E7110E11F11E4 /* LibrespotProcessLifetimeTests.swift */; };
+		B81C0E11A11E7110E11F11E2 /* PlaybackScrubberTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = A81C0E11A11E7110E11F11E2 /* PlaybackScrubberTimeline.swift */; };
+		B81C0E11A11E7110E11F11E3 /* PlaybackScrubberTimelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A81C0E11A11E7110E11F11E3 /* PlaybackScrubberTimelineTests.swift */; };
 		A2EFCBB055FAA30F9CB7F272 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30381BAFB70C87DA33DE078A /* KeychainStore.swift */; };
 		C520A88851AF92A131627B98 /* LoopbackServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71204D452D792DCD63E0C2E5 /* LoopbackServer.swift */; };
 		CF2B8940E24734D9F6539A19 /* LibrespotEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0232ED88A039CAFED39E2EA /* LibrespotEngine.swift */; };
@@ -56,6 +60,10 @@
 		359C776CFDCF0FFF39839A47 /* SpotifyModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyModelsTests.swift; sourceTree = "<group>"; };
 		359EB2BF5D9EB6481E849DA7 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		3EAA4741E8A0EEEC9B8AB57B /* LibrespotLocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrespotLocator.swift; sourceTree = "<group>"; };
+		A81C0E11A11E7110E11F11E1 /* LibrespotProcessLifetime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrespotProcessLifetime.swift; sourceTree = "<group>"; };
+		A81C0E11A11E7110E11F11E4 /* LibrespotProcessLifetimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrespotProcessLifetimeTests.swift; sourceTree = "<group>"; };
+		A81C0E11A11E7110E11F11E2 /* PlaybackScrubberTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackScrubberTimeline.swift; sourceTree = "<group>"; };
+		A81C0E11A11E7110E11F11E3 /* PlaybackScrubberTimelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackScrubberTimelineTests.swift; sourceTree = "<group>"; };
 		509D8701544055DD861B74B5 /* AlbumArtistViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumArtistViews.swift; sourceTree = "<group>"; };
 		69FEBA8EB35B10F71E4A41C4 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		71204D452D792DCD63E0C2E5 /* LoopbackServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopbackServer.swift; sourceTree = "<group>"; };
@@ -87,7 +95,9 @@
 		334DD3CA3D3DB8443E5BDB0E /* SpotifyLiteTests */ = {
 			isa = PBXGroup;
 			children = (
+				A81C0E11A11E7110E11F11E4 /* LibrespotProcessLifetimeTests.swift */,
 				05277268A512262B73C7ACE6 /* PKCETests.swift */,
+				A81C0E11A11E7110E11F11E3 /* PlaybackScrubberTimelineTests.swift */,
 				359C776CFDCF0FFF39839A47 /* SpotifyModelsTests.swift */,
 				2EDC572A59C2CE13072E0E78 /* TokenSetTests.swift */,
 			);
@@ -156,6 +166,8 @@
 			children = (
 				D0232ED88A039CAFED39E2EA /* LibrespotEngine.swift */,
 				3EAA4741E8A0EEEC9B8AB57B /* LibrespotLocator.swift */,
+				A81C0E11A11E7110E11F11E1 /* LibrespotProcessLifetime.swift */,
+				A81C0E11A11E7110E11F11E2 /* PlaybackScrubberTimeline.swift */,
 				C45A2CB5D8B8E59953E31472 /* PlayerStore.swift */,
 			);
 			path = Player;
@@ -256,12 +268,14 @@
 				A2EFCBB055FAA30F9CB7F272 /* KeychainStore.swift in Sources */,
 				CF2B8940E24734D9F6539A19 /* LibrespotEngine.swift in Sources */,
 				A1762DBACBA1C6D52674AFE6 /* LibrespotLocator.swift in Sources */,
+				B81C0E11A11E7110E11F11E1 /* LibrespotProcessLifetime.swift in Sources */,
 				9AFEC9374BEC5E47ABFF04B6 /* LoginView.swift in Sources */,
 				C520A88851AF92A131627B98 /* LoopbackServer.swift in Sources */,
 				411465442F1E34BBDE1957A2 /* MainWindow.swift in Sources */,
 				7F583DC916D60BA79F02F1BB /* MenuBarPlayerView.swift in Sources */,
 				FB3DE28087D854EC56523A34 /* Models.swift in Sources */,
 				88ECD797833D1870134DD5D4 /* PKCE.swift in Sources */,
+				B81C0E11A11E7110E11F11E2 /* PlaybackScrubberTimeline.swift in Sources */,
 				419E029DFC7D508861EFB711 /* PlayerBarView.swift in Sources */,
 				0780D77CD686A367F5F958B9 /* PlayerStore.swift in Sources */,
 				F5D9F1F8F5A4356BFAF49FA5 /* QueueView.swift in Sources */,
@@ -277,7 +291,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B81C0E11A11E7110E11F11E4 /* LibrespotProcessLifetimeTests.swift in Sources */,
 				0F9913C05AB895569941B7F3 /* PKCETests.swift in Sources */,
+				B81C0E11A11E7110E11F11E3 /* PlaybackScrubberTimelineTests.swift in Sources */,
 				7D8C3D3E9D29B1C38C1AB203 /* SpotifyModelsTests.swift in Sources */,
 				944B3F61343E5F479971BEA4 /* TokenSetTests.swift in Sources */,
 			);

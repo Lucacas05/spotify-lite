@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Observation
 import os
@@ -25,6 +26,8 @@ final class LibrespotEngine {
 
     private(set) var status: Status = .stopped
     private var process: Process?
+    /// Write end of the wrapper stdin pipe. Closing it (or dying) kills librespot.
+    private var lifetimeStdin: FileHandle?
     private var recentStderr: [String] = []
     private let logger = Logger(subsystem: "com.lucas.spotifylite", category: "librespot")
 
@@ -35,6 +38,7 @@ final class LibrespotEngine {
 
     func start() async {
         guard process == nil else { return }
+        await reapStaleInstances()
         status = .starting
         do {
             let installation = try LibrespotLocator.locate()
@@ -44,6 +48,7 @@ final class LibrespotEngine {
         } catch {
             logger.error("start failed: \(error.localizedDescription, privacy: .public)")
             status = .failed(error.localizedDescription)
+            closeLifetimePipe()
             process = nil
         }
     }
@@ -53,6 +58,7 @@ final class LibrespotEngine {
         // Clear first so terminationHandler treats this as an intentional stop.
         self.process = nil
         process.terminationHandler = nil
+        closeLifetimePipe()
         process.terminate()
         status = .stopped
     }
@@ -63,12 +69,36 @@ final class LibrespotEngine {
         return !FileManager.default.fileExists(atPath: dir.appending(path: "credentials.json").path)
     }
 
+    /// SIGTERM leftover SpotifyLite librespot processes (orphans from crash /
+    /// Xcode stop). Does not touch `credentials.json`.
+    private func reapStaleInstances() async {
+        let cachePath: String
+        do {
+            cachePath = try cacheDirectory().path
+        } catch {
+            return
+        }
+        let pids = LibrespotProcessLifetime.stalePIDs(
+            deviceName: Self.deviceName, cachePath: cachePath)
+        guard !pids.isEmpty else { return }
+        logger.info("reaping \(pids.count, privacy: .public) stale librespot process(es)")
+        LibrespotProcessLifetime.terminate(pids: pids)
+        try? await Task.sleep(for: .milliseconds(300))
+        let remaining = LibrespotProcessLifetime.stillRunning(pids)
+        if !remaining.isEmpty {
+            LibrespotProcessLifetime.terminate(pids: remaining, signal: SIGKILL)
+        }
+    }
+
+    private func closeLifetimePipe() {
+        try? lifetimeStdin?.close()
+        lifetimeStdin = nil
+    }
+
     private func launch(installation: LibrespotLocator.Installation) throws {
         let cacheURL = try cacheDirectory()
 
-        let process = Process()
-        process.executableURL = installation.binaryURL
-        var arguments = [
+        var librespotArguments = [
             "--name", Self.deviceName,
             "--backend", "rodio",
             "--zeroconf-backend", "dns-sd",
@@ -79,10 +109,17 @@ final class LibrespotEngine {
         if needsAuthorization {
             // One-time: librespot opens the default browser so the user can
             // approve access; the resulting credentials land in the cache.
-            arguments.append("--enable-oauth")
+            librespotArguments.append("--enable-oauth")
         }
-        process.arguments = arguments
 
+        let lifetimePipe = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: LibrespotProcessLifetime.bashPath)
+        process.arguments = LibrespotProcessLifetime.wrapperArguments(
+            binaryPath: installation.binaryURL.path,
+            librespotArguments: librespotArguments
+        )
+        process.standardInput = lifetimePipe
         process.standardOutput = FileHandle.nullDevice
         let stderr = Pipe()
         process.standardError = stderr
@@ -100,12 +137,14 @@ final class LibrespotEngine {
 
         try process.run()
         self.process = process
+        self.lifetimeStdin = lifetimePipe.fileHandleForWriting
     }
 
     private func handleTermination(code: Int32) {
         logger.error("terminated with code \(code)")
         guard process != nil else { return }  // stop() already handled it
         process = nil
+        closeLifetimePipe()
         let detail = recentStderr.suffix(3).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         if detail.contains("INVALID_CREDENTIALS") || detail.contains("Login request was denied") {
             // Stored credentials went bad; drop them so the next start
