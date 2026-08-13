@@ -2,23 +2,42 @@ import XCTest
 @testable import SpotifyLite
 
 final class PlaybackScrubberTimelineTests: XCTestCase {
-    func testTimelinePausesWhenNothingIsPlaying() {
-        XCTAssertTrue(PlaybackScrubberTimeline.isPaused(
+    func testStaticPathIsSelectedWhenNothingIsPlaying() {
+        XCTAssertEqual(
+            PlaybackScrubberTimeline.path(isPlaying: false, durationMs: 180_000, isScrubbing: false),
+            .static
+        )
+        XCTAssertFalse(PlaybackScrubberTimeline.usesTimedScrubber(
             isPlaying: false, durationMs: 180_000, isScrubbing: false))
     }
 
-    func testTimelinePausesWhenThereIsNoTrack() {
-        XCTAssertTrue(PlaybackScrubberTimeline.isPaused(
-            isPlaying: true, durationMs: 0, isScrubbing: false))
+    func testStaticPathIsSelectedWhenPlaybackIsPaused() {
+        XCTAssertEqual(
+            PlaybackScrubberTimeline.path(isPlaying: false, durationMs: 180_000, isScrubbing: false),
+            .static
+        )
     }
 
-    func testTimelinePausesWhileScrubbingSoDragUsesLocalState() {
-        XCTAssertTrue(PlaybackScrubberTimeline.isPaused(
-            isPlaying: true, durationMs: 180_000, isScrubbing: true))
+    func testStaticPathIsSelectedWhenThereIsNoTrack() {
+        XCTAssertEqual(
+            PlaybackScrubberTimeline.path(isPlaying: true, durationMs: 0, isScrubbing: false),
+            .static
+        )
     }
 
-    func testTimelineTicksOnlyWhilePlayingATrack() {
-        XCTAssertFalse(PlaybackScrubberTimeline.isPaused(
+    func testStaticPathIsSelectedWhileScrubbingSoDragUsesLocalState() {
+        XCTAssertEqual(
+            PlaybackScrubberTimeline.path(isPlaying: true, durationMs: 180_000, isScrubbing: true),
+            .static
+        )
+    }
+
+    func testTimedPathExistsOnlyWhilePlayingATrack() {
+        XCTAssertEqual(
+            PlaybackScrubberTimeline.path(isPlaying: true, durationMs: 180_000, isScrubbing: false),
+            .timed
+        )
+        XCTAssertTrue(PlaybackScrubberTimeline.usesTimedScrubber(
             isPlaying: true, durationMs: 180_000, isScrubbing: false))
     }
 
