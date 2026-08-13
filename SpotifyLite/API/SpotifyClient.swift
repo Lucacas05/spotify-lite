@@ -4,22 +4,18 @@ struct UserProfile: Decodable {
     let id: String
     let displayName: String?
     let product: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case displayName = "display_name"
-        case product
-    }
 }
 
 enum SpotifyAPIError: LocalizedError {
     case notSignedIn
     case http(Int, String)
+    case emptyResponse
 
     var errorDescription: String? {
         switch self {
         case .notSignedIn: return "No hay sesión activa."
         case .http(let code, let body): return "Spotify respondió \(code): \(body)"
+        case .emptyResponse: return "Spotify no devolvió datos."
         }
     }
 }
@@ -31,20 +27,52 @@ actor SpotifyClient {
 
     private let baseURL = URL(string: "https://api.spotify.com/v1")!
     private var refreshTask: Task<TokenSet, Error>?
+    private let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }()
 
-    func request<T: Decodable>(_ path: String) async throws -> T {
-        let data = try await send(path: path, allowRetry: true)
-        return try JSONDecoder().decode(T.self, from: data)
+    func get<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
+        guard let value: T = try await getOptional(path, query: query) else {
+            throw SpotifyAPIError.emptyResponse
+        }
+        return value
     }
 
-    private func send(path: String, allowRetry: Bool) async throws -> Data {
+    /// Para endpoints que responden 204 sin cuerpo (GET /me/player sin nada sonando).
+    func getOptional<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T? {
+        let data = try await send("GET", path: path, query: query, body: nil, allowRetry: true)
+        guard !data.isEmpty else { return nil }
+        return try decoder.decode(T.self, from: data)
+    }
+
+    /// PUT/POST de los endpoints player, que responden 200/202/204 sin cuerpo útil.
+    func command(_ method: String, _ path: String,
+                 query: [String: String] = [:], body: [String: Any]? = nil) async throws {
+        _ = try await send(method, path: path, query: query, body: body, allowRetry: true)
+    }
+
+    private func send(_ method: String, path: String, query: [String: String],
+                      body: [String: Any]?, allowRetry: Bool) async throws -> Data {
         guard var tokens = KeychainStore.load() else { throw SpotifyAPIError.notSignedIn }
         if tokens.isExpired {
             tokens = try await refreshTokens(tokens)
         }
 
-        var request = URLRequest(url: baseURL.appending(path: path))
+        var components = URLComponents(url: baseURL.appending(path: path),
+                                       resolvingAgainstBaseURL: false)!
+        if !query.isEmpty {
+            components.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
+        }
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = method
         request.setValue("Bearer \(tokens.accessToken)", forHTTPHeaderField: "Authorization")
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
@@ -55,11 +83,11 @@ actor SpotifyClient {
             return data
         case 401 where allowRetry:
             _ = try await refreshTokens(tokens)
-            return try await send(path: path, allowRetry: false)
+            return try await send(method, path: path, query: query, body: body, allowRetry: false)
         case 429:
             let retryAfter = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "1") ?? 1
             try await Task.sleep(for: .seconds(retryAfter))
-            return try await send(path: path, allowRetry: allowRetry)
+            return try await send(method, path: path, query: query, body: body, allowRetry: allowRetry)
         default:
             throw SpotifyAPIError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
         }
