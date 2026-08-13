@@ -143,8 +143,6 @@ struct PlaybackProgressState {
 final class PlayerStore {
     private(set) var state: PlaybackState?
     private(set) var devices: [Device] = []
-    private(set) var queue: [Track] = []
-    private(set) var queueIsLoading = false
     var lastError: String?
     /// Optimistic volume so keyboard +/- update the slider without waiting for poll.
     var volumePercent: Int = 50
@@ -154,6 +152,15 @@ final class PlayerStore {
     private var pollTask: Task<Void, Never>?
     private var progressState = PlaybackProgressState()
     private var seekRequestID = 0
+    private var queueState = QueueRefreshState()
+    private var queueLoadTask: Task<Void, Never>?
+    private var playbackSyncTask: Task<Void, Never>?
+
+    var queue: [Track] { queueState.upcoming }
+    var queueRows: [QueueRowItem] { queueState.rows }
+    var queueIsLoading: Bool { queueState.isLoading }
+    var queueError: String? { queueState.lastError }
+    var queuePresentation: QueuePresentation { queueState.presentation }
 
     var currentTrackIdentifier: String? {
         state?.item?.id ?? state?.item?.uri
@@ -216,36 +223,51 @@ final class PlayerStore {
     }
 
     func next() async {
-        await run { try await SpotifyClient.shared.command("POST", "me/player/next") }
+        let mutation = PlaybackMutation.skipForward(
+            previousURI: state?.item?.uri,
+            expectedNextURI: queue.first?.uri
+        )
+        await run(mutation: mutation) {
+            try await SpotifyClient.shared.command("POST", "me/player/next")
+        }
     }
 
-    func loadQueue() async {
-        queueIsLoading = true
-        defer { queueIsLoading = false }
-        do {
-            let response: QueueResponse = try await SpotifyClient.shared.get("me/player/queue")
-            queue = response.queue
-            lastError = nil
-        } catch {
-            queue = []
-            lastError = friendlyMessage(for: error)
+    func loadQueue(force: Bool = false) async {
+        if let existing = queueLoadTask, !force {
+            await existing.value
+            return
+        }
+        var nextState = queueState
+        guard let generation = nextState.beginRefresh(force: force) else {
+            queueState = nextState
+            await queueLoadTask?.value
+            return
+        }
+        queueState = nextState
+        let task = Task { await self.performQueueFetch(generation: generation) }
+        queueLoadTask = task
+        await task.value
+        if queueLoadTask == task {
+            queueLoadTask = nil
         }
     }
 
     func playNext(_ track: Track) async {
-        await run(refreshAfter: false) {
+        let previousMatchingCount = queue.filter { $0.uri == track.uri }.count
+        await run(mutation: .addToQueue(uri: track.uri, previousMatchingCount: previousMatchingCount)) {
             try await SpotifyClient.shared.command(
                 "POST", "me/player/queue", query: ["uri": track.uri])
         }
-        await loadQueue()
     }
 
     func previous() async {
-        await run { try await SpotifyClient.shared.command("POST", "me/player/previous") }
+        await run(mutation: .skipBack(previousURI: state?.item?.uri)) {
+            try await SpotifyClient.shared.command("POST", "me/player/previous")
+        }
     }
 
     func setShuffle(_ enabled: Bool) async {
-        await run {
+        await run(mutation: .shuffle(enabled: enabled)) {
             try await SpotifyClient.shared.command(
                 "PUT", "me/player/shuffle", query: ["state": enabled ? "true" : "false"])
         }
@@ -319,7 +341,9 @@ final class PlayerStore {
 
     func transferPlayback(to device: Device) async {
         guard let id = device.id else { return }
-        await run { try await SpotifyClient.shared.command("PUT", "me/player", body: ["device_ids": [id]]) }
+        await run(mutation: .transfer(deviceID: id)) {
+            try await SpotifyClient.shared.command("PUT", "me/player", body: ["device_ids": [id]])
+        }
     }
 
     /// Starts the local librespot engine and moves playback to this Mac, so the
@@ -373,7 +397,8 @@ final class PlayerStore {
         } else if let trackURI {
             body["uris"] = [trackURI]
         }
-        await run {
+        let expectedURI = trackURI ?? uris?.first
+        await run(mutation: .play(expectedURI: expectedURI)) {
             do {
                 try await SpotifyClient.shared.command("PUT", "me/player/play", body: body.isEmpty ? nil : body)
             } catch let error as SpotifyAPIError where error.isNoActiveDevice {
@@ -396,17 +421,70 @@ final class PlayerStore {
         progressState.progress(at: date)
     }
 
-    private func run(refreshAfter: Bool = true, _ operation: () async throws -> Void) async {
+    private func run(
+        mutation: PlaybackMutation? = nil,
+        refreshAfter: Bool = true,
+        _ operation: () async throws -> Void
+    ) async {
         do {
             try await operation()
             lastError = nil
-            if refreshAfter {
-                // State takes a moment to propagate on Spotify's backend.
-                try? await Task.sleep(for: .milliseconds(400))
+            if let mutation {
+                await synchronizePlaybackAndQueue(after: mutation)
+            } else if refreshAfter {
+                try? await Task.sleep(for: PlaybackQueueSync.propagationDelay)
                 await refresh()
             }
         } catch {
             lastError = friendlyMessage(for: error)
+        }
+    }
+
+    private func synchronizePlaybackAndQueue(after mutation: PlaybackMutation) async {
+        playbackSyncTask?.cancel()
+        let task = Task { await self.runSynchronization(after: mutation) }
+        playbackSyncTask = task
+        await task.value
+    }
+
+    private func runSynchronization(after mutation: PlaybackMutation) async {
+        try? await Task.sleep(for: PlaybackQueueSync.propagationDelay)
+        guard !Task.isCancelled else { return }
+
+        for attempt in 1...PlaybackQueueSync.maxAttempts {
+            await refresh()
+            await loadQueue(force: true)
+            guard !Task.isCancelled else { return }
+
+            let snapshot = PlaybackQueueSnapshot(
+                playback: state,
+                currentlyPlaying: queueState.currentlyPlaying,
+                upcoming: queueState.upcoming
+            )
+            if !PlaybackQueueSync.isStale(snapshot, after: mutation) {
+                return
+            }
+            if attempt < PlaybackQueueSync.maxAttempts {
+                try? await Task.sleep(for: PlaybackQueueSync.retryDelay)
+                guard !Task.isCancelled else { return }
+            }
+        }
+    }
+
+    private func performQueueFetch(generation: Int) async {
+        do {
+            let response: QueueResponse = try await SpotifyClient.shared.get("me/player/queue")
+            var nextState = queueState
+            nextState.applySuccess(generation: generation, response: response)
+            queueState = nextState
+        } catch is CancellationError {
+            var nextState = queueState
+            nextState.cancel(generation: generation)
+            queueState = nextState
+        } catch {
+            var nextState = queueState
+            nextState.applyFailure(generation: generation, message: friendlyMessage(for: error))
+            queueState = nextState
         }
     }
 

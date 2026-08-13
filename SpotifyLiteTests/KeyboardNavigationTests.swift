@@ -257,11 +257,13 @@ final class KeyboardNavigationTests: XCTestCase {
         XCTAssertFalse(state.queueOpen)
     }
 
-    func testEnterOnQueuePlaysSelectedItem() {
+    func testEnterOnQueueInspectsWithoutStartingPlayback() {
         var state = NavigationState(zone: .queue)
         state.queueOpen = true
         state.queueIndex = 1
-        XCTAssertEqual(apply(NavigationKey(name: "Enter"), to: &state), .playQueueTrack(1))
+        XCTAssertEqual(apply(NavigationKey(name: "Enter"), to: &state), .none)
+        XCTAssertEqual(state.zone, .queue)
+        XCTAssertEqual(state.queueIndex, 1)
     }
 
     func testPrototypeBasicFlow() {

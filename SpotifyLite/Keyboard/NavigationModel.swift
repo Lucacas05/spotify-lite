@@ -72,7 +72,6 @@ enum NavigationIntent: Equatable {
     case none
     case openSidebarItem(Int)
     case playListTrack(Int)
-    case playQueueTrack(Int)
     case togglePlayPause
     case seekBySeconds(Int)
     case playerPrevious
@@ -347,7 +346,7 @@ enum NavigationModel {
             return finish(&s, context, .playListTrack(s.listIndex))
         case .queue:
             guard context.queueCount > 0 else { return finish(&s, context) }
-            return finish(&s, context, .playQueueTrack(s.queueIndex))
+            return finish(&s, context)
         case .player:
             return activatePlayer(&s, context: context)
         }
