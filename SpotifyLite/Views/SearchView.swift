@@ -15,16 +15,16 @@ struct SearchView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TextField("Buscar canciones…", text: $query)
+            TextField("Search songs…", text: $query)
                 .textFieldStyle(.roundedBorder)
                 .focused($searchFocused)
                 .padding(12)
 
             if let error {
-                ContentUnavailableView("Error al buscar", systemImage: "exclamationmark.triangle",
+                ContentUnavailableView("Search failed", systemImage: "exclamationmark.triangle",
                                        description: Text(error))
             } else if results.isEmpty {
-                ContentUnavailableView(query.isEmpty ? "Busca en Spotify" : (searching ? "Buscando…" : "Sin resultados"),
+                ContentUnavailableView(query.isEmpty ? "Search Spotify" : (searching ? "Searching…" : "No results"),
                                        systemImage: "magnifyingglass")
             } else {
                 ScrollView {
@@ -39,7 +39,7 @@ struct SearchView: View {
                 }
             }
         }
-        .navigationTitle("Buscar")
+        .navigationTitle("Search")
         .onAppear { searchFocused = true }
         .onReceive(NotificationCenter.default.publisher(for: .focusSpotifySearch)) { _ in
             searchFocused = true
@@ -51,7 +51,7 @@ struct SearchView: View {
                 error = nil
                 return
             }
-            // Debounce: si el usuario sigue escribiendo, esta task se cancela.
+            // Debounce: if the user keeps typing, this task is cancelled.
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
             searching = true

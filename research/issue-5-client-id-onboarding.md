@@ -1,33 +1,33 @@
-# Onboarding del Client ID por usuario — diseño acordado
+# Per-user Client ID onboarding — agreed design
 
-Resultado del grilling del ticket #5, 13 de agosto de 2026. Hechos verificados contra la documentación de Spotify vigente a esa fecha.
+Result of the grilling for ticket #5, 13 August 2026. Facts verified against Spotify documentation current as of that date.
 
-## Primer arranque
+## First launch
 
-- App **explorable sin configurar**: sidebar visible, área de contenido con una tarjeta central "Get started" que lanza el wizard. Sin estados vacíos por sección ni datos mock.
-- El wizard se **auto-abre al primer arranque** como **sheet**, cerrable; si se cierra, queda el CTA "Get started".
-- Sin persistencia de progreso: el wizard siempre arranca en el paso 1, con el campo de Client ID pre-llenado si ya había uno.
+- App **explorable without setup**: sidebar visible, content area with a central "Get started" card that launches the wizard. No per-section empty states or mock data.
+- The wizard **auto-opens on first launch** as a **sheet**, dismissible; if dismissed, the "Get started" CTA remains.
+- No progress persistence: the wizard always starts at step 1, with the Client ID field pre-filled if one already exists.
 
-## Wizard (multi-paso, solo inglés en v1)
+## Wizard (multi-step, English only in v1)
 
-1. **Crear la app** en el [Developer Dashboard](https://developer.spotify.com/dashboard): botón que abre el dashboard; instrucciones: nombre, descripción, marcar **Web API**, aceptar los Developer Terms. Aviso: el dashboard puede exigir verificar el email antes de crear apps.
-2. **Registrar el redirect URI loopback** `http://127.0.0.1:<puerto>/callback`, pre-escrito con botón de copiar. Advertir que la coincidencia debe ser exacta (mayúsculas, path, slash final). Contexto: desde 2025 Spotify solo documenta como seguras las formas `https://` y loopback; `localhost` ya no vale; los custom schemes (lo que asumía el plan original con `spotifylite://callback`) siguen "oficialmente soportados" pero hay reportes de `INVALID_CLIENT: Insecure redirect URI` en clientes nuevos. **Decisión: loopback**, con mini servidor HTTP local efímero durante el login (el puerto dinámico tiene exención para literales loopback).
-3. **Pegar el Client ID**: trim de espacios, no vacío. Si no matchea `^[0-9a-f]{32}$` (formato observado, sin regex oficial), **advertencia amarilla sin bloquear** — el login de prueba es la autoridad final. Se guarda en **UserDefaults** (no es secreto; los tokens sí van a Keychain).
-4. **Probar login** (OAuth PKCE real). El onboarding solo se marca completo cuando el flujo devuelve tokens.
+1. **Create the app** in the [Developer Dashboard](https://developer.spotify.com/dashboard): button that opens the dashboard; instructions: name, description, check **Web API**, accept the Developer Terms. Note: the dashboard may require email verification before creating apps.
+2. **Register the loopback redirect URI** `http://127.0.0.1:<port>/callback`, pre-written with a copy button. Warn that the match must be exact (casing, path, trailing slash). Context: since 2025 Spotify only documents `https://` and loopback as safe; `localhost` is no longer valid; custom schemes (what the original plan assumed with `spotifylite://callback`) remain "officially supported" but there are reports of `INVALID_CLIENT: Insecure redirect URI` on new clients. **Decision: loopback**, with an ephemeral local HTTP mini-server during login (dynamic ports have an exemption for loopback literals).
+3. **Paste the Client ID**: trim whitespace, not empty. If it does not match `^[0-9a-f]{32}$` (observed format, no official regex), **yellow warning without blocking** — the test login is the final authority. Stored in **UserDefaults** (it is not a secret; tokens do go to the Keychain).
+4. **Test login** (real OAuth PKCE). Onboarding is only marked complete when the flow returns tokens.
 
-## Errores del paso de login → mensajes accionables
+## Login-step errors → actionable messages
 
-| Error | Mensaje del wizard |
+| Error | Wizard message |
 |---|---|
-| `INVALID_CLIENT: Invalid client` | El Client ID no existe: revísalo y pégalo de nuevo. |
-| `Invalid redirect URI` / `Insecure redirect URI` | Vuelve a los settings de tu app y añade exactamente este URI (botón de copiar). |
-| HTTP `403` "User not registered" | Tu cuenta no está registrada en la app del dashboard (Development Mode: 5 usuarios autenticados por app; irrelevante si cada usuario crea la suya). |
-| HTTP `429` `QUOTA_EXCEEDED` / fallos ligados a Premium | El dueño de la app necesita Premium activo; la cuota se comparte entre los Client IDs de la cuenta (máx. 25 por cuenta desde julio 2026). |
+| `INVALID_CLIENT: Invalid client` | The Client ID does not exist: check it and paste it again. |
+| `Invalid redirect URI` / `Insecure redirect URI` | Go back to your app settings and add exactly this URI (copy button). |
+| HTTP `403` "User not registered" | Your account is not registered in the dashboard app (Development Mode: 5 authenticated users per app; irrelevant if each user creates their own). |
+| HTTP `429` `QUOTA_EXCEEDED` / Premium-related failures | The app owner needs active Premium; quota is shared across the account's Client IDs (max 25 per account since July 2026). |
 
-Fallback genérico con enlace a troubleshooting para cualquier otro error.
+Generic fallback with a troubleshooting link for any other error.
 
-## Cierre
+## Close
 
-- Pantalla "You're all set" con botón que cierra la sheet y carga la biblioteca.
-- En el paso final, `GET /me` → si `product ≠ premium`: advertencia "Free account: browsing works, playback control won't", sin bloquear, más un badge discreto persistente en la UI.
-- Reconfiguración posterior vía **panel de Ajustes** (campo editable + "probar login" + diagnóstico), sin reabrir el wizard.
+- "You're all set" screen with a button that closes the sheet and loads the library.
+- On the final step, `GET /me` → if `product ≠ premium`: warning "Free account: browsing works, playback control won't", without blocking, plus a discreet persistent badge in the UI.
+- Later reconfiguration via a **Settings panel** (editable field + "test login" + diagnostics), without reopening the wizard.

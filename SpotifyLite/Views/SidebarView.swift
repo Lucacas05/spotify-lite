@@ -38,7 +38,7 @@ struct SidebarView: View {
     var body: some View {
         List(selection: $selection) {
             Section {
-                Label("Buscar", systemImage: "magnifyingglass")
+                Label("Search", systemImage: "magnifyingglass")
                     .tag(SidebarItem.search)
                 Label("Liked Songs", systemImage: "heart.fill")
                     .tag(SidebarItem.likedSongs)

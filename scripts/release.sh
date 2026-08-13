@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Release firmado y notarizado. Requisitos:
-#   DEVELOPER_ID="Developer ID Application: Nombre (TEAMID)"
-#   NOTARY_PROFILE="spotifylite-notary"  # creado con `xcrun notarytool store-credentials`
-# Opcional: VERSION=0.1.0
+# Signed and notarized release. Requirements:
+#   DEVELOPER_ID="Developer ID Application: Name (TEAMID)"
+#   NOTARY_PROFILE="spotifylite-notary"  # created with `xcrun notarytool store-credentials`
+# Optional: VERSION=0.1.0
 
-: "${DEVELOPER_ID:?Define DEVELOPER_ID con la identidad Developer ID Application}"
-: "${NOTARY_PROFILE:?Define NOTARY_PROFILE con el perfil de notarytool}"
+: "${DEVELOPER_ID:?Set DEVELOPER_ID to the Developer ID Application identity}"
+: "${NOTARY_PROFILE:?Set NOTARY_PROFILE to the notarytool profile}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="${VERSION:-$(awk '/MARKETING_VERSION:/ { print $2; exit }' "$ROOT/project.yml")}" 
@@ -36,7 +36,7 @@ xcodebuild archive \
 codesign --verify --deep --strict --verbose=2 "$APP"
 spctl --assess --type execute --verbose=2 "$APP" || true
 
-# Notarizar y grapar la app antes de introducirla en el DMG.
+# Notarize and staple the app before putting it in the DMG.
 ditto -c -k --keepParent "$APP" "$BUILD_DIR/SpotifyLite.zip"
 xcrun notarytool submit "$BUILD_DIR/SpotifyLite.zip" \
   --keychain-profile "$NOTARY_PROFILE" --wait
@@ -54,4 +54,4 @@ xcrun stapler validate "$DMG"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
 
 shasum -a 256 "$DMG" | tee "$DMG.sha256"
-echo "Release listo: $DMG"
+echo "Release ready: $DMG"

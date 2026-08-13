@@ -10,7 +10,7 @@ struct MenuBarPlayerView: View {
         VStack(alignment: .leading, spacing: 10) {
             if auth.state == .signedIn {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(player.state?.item?.name ?? "Nada sonando")
+                    Text(player.state?.item?.name ?? "Nothing playing")
                         .font(.headline)
                         .lineLimit(1)
                     Text(player.state?.item?.artistNames ?? "SpotifyLite")
@@ -29,16 +29,16 @@ struct MenuBarPlayerView: View {
                         Image(systemName: "forward.fill")
                     }
                 }
-                Button("Ocultar icono de la barra de menús") { menuBarEnabled = false }
+                Button("Hide menu bar icon") { menuBarEnabled = false }
                 Divider()
-                Button("Cerrar sesión") { auth.logout() }
+                Button("Log out") { auth.logout() }
             } else {
-                Text("Abre SpotifyLite para iniciar sesión.")
+                Text("Open SpotifyLite to log in.")
                     .foregroundStyle(.secondary)
-                Button("Ocultar icono de la barra de menús") { menuBarEnabled = false }
+                Button("Hide menu bar icon") { menuBarEnabled = false }
             }
             Divider()
-            Button("Salir de SpotifyLite") { NSApplication.shared.terminate(nil) }
+            Button("Quit SpotifyLite") { NSApplication.shared.terminate(nil) }
         }
         .padding(4)
         .frame(width: 260)

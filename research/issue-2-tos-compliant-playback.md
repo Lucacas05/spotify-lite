@@ -1,67 +1,65 @@
+## Main finding
 
-## Hallazgo principal
+As of 12 August 2026, I did not find a public Spotify SDK that lets a native macOS app receive and play the catalog locally with a general, documented authorization.
 
-Al 12 de agosto de 2026, no encontré un SDK público de Spotify que permita a una app nativa de macOS recibir y reproducir localmente el catálogo con una autorización general y documentada.
+Official paths split as follows:
 
-Las rutas oficiales se separan así:
+- Web Playback SDK: playback inside a compatible browser. Spotify does not document WKWebView, Electron, or other embedded webviews as supported environments.
+- Web API: metadata, state, and commands against Spotify or a Spotify Connect device. It does not deliver a raw audio stream to the app.
+- iOS SDK: the current SDK is App Remote and controls the installed Spotify app. Earlier mobile streaming SDKs were withdrawn.
+- Partner/eSDK: integrated playback exists for approved hardware, with application, NDA, certification, and a distribution agreement. It is not a self-service path for a desktop app.
+- Written agreement: the terms leave room for products or devices approved in writing, but there is no automatic permission for an arbitrary native app.
 
-- Web Playback SDK: reproducción dentro de un navegador compatible. Spotify no documenta WKWebView, Electron ni otros webviews embebidos como entornos soportados.
-- Web API: metadatos, estado y comandos sobre Spotify o un dispositivo Spotify Connect. No entrega un flujo de audio crudo a la app.
-- iOS SDK: el SDK actual es App Remote y controla la app de Spotify instalada. Los SDK de streaming móvil anteriores fueron retirados.
-- Partner/eSDK: existe playback integrado para hardware aprobado, con solicitud, NDA, certificación y acuerdo de distribución. No es un camino self-service para una app desktop.
-- Acuerdo escrito: los términos dejan espacio para productos o dispositivos aprobados por escrito, pero no hay un permiso automático para una app nativa cualquiera.
+## Web Playback SDK and WKWebView
 
-## Web Playback SDK y WKWebView
+The [official Web Playback SDK documentation](https://developer.spotify.com/documentation/web-playback-sdk) describes it as a client-side JavaScript library that creates a local Spotify Connect device in the browser. It lists Chrome, Firefox, Safari, and Edge on desktop, and explains EME, autoplay, and iframe requirements. It does not list WKWebView, embedded webviews, Electron, or CEF.
 
-La [documentación oficial del Web Playback SDK](https://developer.spotify.com/documentation/web-playback-sdk) lo describe como una biblioteca JavaScript del lado del cliente que crea un dispositivo Spotify Connect local en el navegador. Enumera Chrome, Firefox, Safari y Edge en desktop, y explica requisitos de EME, autoplay e iframes. No enumera WKWebView, webviews embebidos, Electron o CEF.
+The [Player reference](https://developer.spotify.com/documentation/web-playback-sdk/reference) requires a Premium user and uses the browser's content protection. In practice, protected playback depends on the available CDM/EME: Spotify documents Widevine for some browsers, while WebKit uses Apple's mechanisms. WebKit having EME and FairPlay support does not mean the Web Playback SDK is supported inside WKWebView.
 
-La [referencia del Player](https://developer.spotify.com/documentation/web-playback-sdk/reference) exige un usuario Premium y usa la protección de contenido del navegador. En la práctica, la reproducción protegida depende del CDM/EME disponible: Spotify documenta Widevine para algunos navegadores, mientras que WebKit usa los mecanismos de Apple. Que WebKit tenga soporte para EME y FairPlay no significa que el Web Playback SDK esté soportado dentro de WKWebView.
+Conclusion: a WKWebView prototype might work on some versions, but there is no official support or guarantee of compatibility, authentication, DRM, or lifecycle. For a production app I would not treat it as a supported path. A Safari or Chrome window is closer to the documented path, although it stops being native playback inside the app.
 
-Conclusión: un prototipo en WKWebView podría funcionar en algunas versiones, pero no hay soporte oficial ni garantía de compatibilidad, autenticación, DRM o ciclo de vida. Para una app de producción no lo tomaría como una ruta soportada. Una ventana en Safari o Chrome está más cerca de la ruta documentada, aunque deja de ser playback nativo dentro de la app.
+## Web API: remote control, not local audio
 
-## Web API: control remoto, no audio local
+The official [Start/Resume Playback](https://developer.spotify.com/documentation/web-api/reference/start-a-users-playback), [Get Playback State](https://developer.spotify.com/documentation/web-api/reference/get-information-about-the-users-current-playback), [Get Available Devices](https://developer.spotify.com/documentation/web-api/reference/get-the-users-available-devices), and [Transfer Playback](https://developer.spotify.com/documentation/web-api/reference/transfer-a-users-playback) endpoints can start, pause, query, and transfer playback to an active device. They require the corresponding scopes and, for on-demand playback, Premium.
 
-Los endpoints oficiales de [Start/Resume Playback](https://developer.spotify.com/documentation/web-api/reference/start-a-users-playback), [Get Playback State](https://developer.spotify.com/documentation/web-api/reference/get-information-about-the-users-current-playback), [Get Available Devices](https://developer.spotify.com/documentation/web-api/reference/get-the-users-available-devices) y [Transfer Playback](https://developer.spotify.com/documentation/web-api/reference/transfer-a-users-playback) permiten iniciar, pausar, consultar y transferir playback a un dispositivo activo. Requieren los scopes correspondientes y, para playback bajo demanda, Premium.
+These endpoints send commands and return state, tracks, progress, and devices. The documented API does not return a catalog audio stream to the app. That is the right basis for a remote mode that controls the official Spotify app or a Connect device.
 
-Estos endpoints mandan comandos y devuelven estado, pistas, progreso y dispositivos. La API documentada no devuelve a la app un flujo de audio del catálogo. Esa es la base adecuada para un modo remoto que controle la app oficial de Spotify o un dispositivo Connect.
-
-Sigue aplicando la [Developer Policy](https://developer.spotify.com/policy): hay que mostrar metadatos y portada, se aplican restricciones para streaming y monetización, y está prohibido replicar o reemplazar una experiencia principal de Spotify sin permiso escrito previo.
+The [Developer Policy](https://developer.spotify.com/policy) still applies: metadata and artwork must be shown, streaming and monetization restrictions apply, and replicating or replacing a core Spotify experience without prior written permission is prohibited.
 
 ## iOS SDK
 
-Spotify anunció que los antiguos SDK móviles de streaming dejaron de funcionar y pidió retirarlos antes del 1 de septiembre de 2022 en su [actualización oficial](https://developer.spotify.com/blog/2022-07-15-mobile-streaming-sdks-update). El SDK actual es App Remote: la [documentación de iOS](https://developer.spotify.com/documentation/ios) y su [repositorio oficial](https://github.com/spotify/ios-sdk) explican que la app controla a Spotify instalado en el mismo dispositivo y que Spotify hace el trabajo pesado de playback, red y caché.
+Spotify announced that the old mobile streaming SDKs stopped working and asked for them to be removed before 1 September 2022 in its [official update](https://developer.spotify.com/blog/2022-07-15-mobile-streaming-sdks-update). The current SDK is App Remote: the [iOS documentation](https://developer.spotify.com/documentation/ios) and its [official repository](https://github.com/spotify/ios-sdk) explain that the app controls Spotify installed on the same device, and that Spotify does the heavy lifting of playback, networking, and cache.
 
-No hay documentación oficial para usar ese SDK como motor de audio en macOS, Mac Catalyst o una app desktop nativa. Que una app iOS pueda ejecutarse en Apple silicon no convierte esa integración en un SDK de macOS soportado.
+There is no official documentation for using that SDK as an audio engine on macOS, Mac Catalyst, or a native desktop app. An iOS app being able to run on Apple silicon does not make that integration a supported macOS SDK.
 
-## Partner programs, eSDK y DRM
+## Partner programs, eSDK, and DRM
 
-La vía oficial de playback integrado que sí aparece en la documentación es [Commercial Hardware](https://developer.spotify.com/documentation/commercial-hardware). Spotify indica que acepta solicitudes de organizaciones, no de individuos, y que el proceso incluye evaluación, NDA, acceso al eSDK, pruebas de Certomato, certificación y acuerdo de distribución; ver también el [proceso de onboarding](https://developer.spotify.com/documentation/commercial-hardware/onboarding).
+The official integrated-playback path that does appear in the documentation is [Commercial Hardware](https://developer.spotify.com/documentation/commercial-hardware). Spotify states that it accepts applications from organizations, not individuals, and that the process includes evaluation, NDA, eSDK access, Certomato tests, certification, and a distribution agreement; see also the [onboarding process](https://developer.spotify.com/documentation/commercial-hardware/onboarding).
 
-En ese contexto, [Media Delivery](https://developer.spotify.com/documentation/commercial-hardware/implementation/guides/media-delivery) entrega datos al código del partner para que este implemente decoder y salida de audio. También advierte que el soporte de DRM en la aplicación cubre solo una parte de los formatos. Es un camino negociado para productos aprobados, no una librería pública que cualquier app macOS pueda descargar.
+In that context, [Media Delivery](https://developer.spotify.com/documentation/commercial-hardware/implementation/guides/media-delivery) delivers data to partner code so the partner implements the decoder and audio output. It also warns that DRM support in the application covers only some formats. It is a negotiated path for approved products, not a public library any macOS app can download.
 
-Widevine tampoco resuelve la autorización. La [documentación de Google](https://developers.google.com/widevine/drm/overview) muestra soporte de Widevine en Chrome y CEF/Electron, pero no en Safari desktop, y exige acuerdos de licencia para los productos Widevine. Un CDM o licencia DRM genérica no concede acceso al catálogo de Spotify ni reemplaza el permiso de Spotify. En Apple, [WebKit documenta EME](https://webkit.org/blog/8718/new-webkit-features-in-safari-12-1/) y Apple documenta FairPlay para sus dispositivos y Safari; eso no constituye soporte del Web Playback SDK dentro de WKWebView.
+Widevine also does not solve authorization. [Google's documentation](https://developers.google.com/widevine/drm/overview) shows Widevine support in Chrome and CEF/Electron, but not in desktop Safari, and requires license agreements for Widevine products. A generic CDM or DRM license does not grant access to Spotify's catalog or replace Spotify's permission. On Apple, [WebKit documents EME](https://webkit.org/blog/8718/new-webkit-features-in-safari-12-1/) and Apple documents FairPlay for its devices and Safari; that is not Web Playback SDK support inside WKWebView.
 
-Los [Developer Terms](https://developer.spotify.com/terms) incluyen computadoras desktop dentro de los dispositivos aprobados en términos generales, pero también prohíben, entre otras cosas, ingeniería inversa, extracción del código, stream ripping y copias permanentes. La lectura correcta no es que todo playback desktop sea automáticamente ilegal, sino que una implementación local necesita una base autorizada; no basta con conseguir que técnicamente suene.
+The [Developer Terms](https://developer.spotify.com/terms) include desktop computers among generally approved devices, but they also prohibit reverse engineering, code extraction, stream ripping, and permanent copies, among other things. The correct reading is not that all desktop playback is automatically illegal, but that a local implementation needs an authorized basis; making it technically play is not enough.
 
-## Qué hacen otros clientes
+## What other clients do
 
-| Cliente | Cómo obtiene playback | Qué demuestra |
+| Client | How it gets playback | What it shows |
 | --- | --- | --- |
-| [Psst](https://github.com/jpochyla/psst) | Cliente GUI nativo en Rust; su núcleo obtiene audio por HTTPS/CDN, decodifica y lo entrega a la salida. Está inspirado en librespot y todavía indica que Spotify Connect remoto no está soportado. | Playback local es técnicamente posible, pero el proyecto no documenta una autorización de Spotify. |
-| [ncspot](https://github.com/hrkfdn/ncspot) | Cliente terminal en Rust basado en [librespot](https://github.com/librespot-org/librespot). macOS y Premium son compatibles. | Es un receptor/cliente no oficial basado en una implementación comunitaria. |
-| [spotify_player](https://github.com/aome510/spotify-player) | Usa Web API para REST, biblioteca y control; crea una sesión separada de librespot para streaming y Connect. El streaming se puede desactivar al compilar. | La separación Web API + motor local es una arquitectura práctica, no una prueba de autorización. |
+| [Psst](https://github.com/jpochyla/psst) | Native GUI client in Rust; its core fetches audio over HTTPS/CDN, decodes it, and delivers it to output. It is inspired by librespot and still states that remote Spotify Connect is not supported. | Local playback is technically possible, but the project does not document Spotify authorization. |
+| [ncspot](https://github.com/hrkfdn/ncspot) | Terminal client in Rust based on [librespot](https://github.com/librespot-org/librespot). macOS and Premium are compatible. | It is an unofficial receiver/client based on a community implementation. |
+| [spotify_player](https://github.com/aome510/spotify-player) | Uses the Web API for REST, library, and control; creates a separate librespot session for streaming and Connect. Streaming can be disabled at compile time. | The Web API + local engine split is a practical architecture, not proof of authorization. |
 
-En los repositorios revisados no aparece evidencia pública de un acuerdo de partner con Spotify. Por eso no conviene concluir que todos “violan los ToS” como hecho probado; sí se puede concluir que no son una ruta pública soportada por la documentación de Spotify y que tienen riesgo legal, de bloqueo y de mantenimiento. Los ToS además prohíben conductas como ingeniería inversa, ripping y copias permanentes.
+In the repositories reviewed there is no public evidence of a partner agreement with Spotify. That is why it is not useful to conclude that all of them “violate the ToS” as a proven fact; it is fair to conclude that they are not a public path supported by Spotify's documentation and that they carry legal, blocking, and maintenance risk. The ToS also prohibit reverse engineering, ripping, and permanent copies.
 
-## Recomendación para spotify-lite
+## Recommendation for spotify-lite
 
-La arquitectura más sensata es híbrida, con una frontera legal y técnica clara:
+The most sensible architecture is hybrid, with a clear legal and technical boundary:
 
-1. Modo oficial por defecto: OAuth PKCE, Web API para búsqueda, metadatos, biblioteca y estado, y comandos de transferencia/control remoto. La salida de audio queda en Spotify o en un dispositivo Connect autorizado.
-2. Backend opcional: un proceso externo de librespot, aislado detrás de una interfaz PlayerEngine, solo si el producto acepta explícitamente que es experimental, no oficial y fuera de la ruta soportada. Mantenerlo opt-in y removible evita acoplar el resto de la app a ese riesgo, pero aislarlo no cambia su estatus legal.
-3. Si el requisito es playback local dentro de la app y cumplimiento estricto: solicitar a Spotify un acuerdo escrito o explorar el programa eSDK/partner. Sin esa aprobación, no prometer playback nativo autorizado.
+1. Official mode by default: OAuth PKCE, Web API for search, metadata, library, and state, and transfer/remote-control commands. Audio output stays in Spotify or on an authorized Connect device.
+2. Optional backend: an external librespot process, isolated behind a PlayerEngine interface, only if the product explicitly accepts that it is experimental, unofficial, and outside the supported path. Keeping it opt-in and removable avoids coupling the rest of the app to that risk, but isolating it does not change its legal status.
+3. If the requirement is local playback inside the app and strict compliance: request a written agreement from Spotify or explore the eSDK/partner program. Without that approval, do not promise authorized native playback.
 
-Así que la respuesta es: sí, Web API + librespot externo opcional es el mejor compromiso técnico para un proyecto que quiere ofrecer ambos modos; no, no se debe describir el conjunto completo como “conforme a los ToS”. El modo remoto es la base de menor riesgo y documentada. El playback local con librespot es una decisión opcional con riesgo propio.
+So the answer is: yes, Web API + optional external librespot is the best technical compromise for a project that wants both modes; no, the full set should not be described as “ToS-compliant”. Remote mode is the lower-risk, documented base. Local playback with librespot is an optional decision with its own risk.
 
-Esto es un análisis técnico de la documentación pública vigente, no asesoría legal.
-
+This is a technical analysis of current public documentation, not legal advice.

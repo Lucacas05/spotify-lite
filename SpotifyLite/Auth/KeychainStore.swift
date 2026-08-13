@@ -7,7 +7,7 @@ struct TokenSet: Codable {
     var expiresAt: Date
 
     var isExpired: Bool {
-        // Margen de 60 s para no usar un token a punto de vencer.
+        // 60 s margin so we do not use a token that is about to expire.
         Date() > expiresAt.addingTimeInterval(-60)
     }
 }

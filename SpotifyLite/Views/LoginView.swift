@@ -18,7 +18,7 @@ struct LoginView: View {
                 .font(.largeTitle.bold())
 
             VStack(alignment: .leading, spacing: 8) {
-                Link("Crea una app en el Spotify Developer Dashboard",
+                Link("Create an app in the Spotify Developer Dashboard",
                      destination: URL(string: "https://developer.spotify.com/dashboard")!)
                     .font(.callout)
 
@@ -26,29 +26,29 @@ struct LoginView: View {
                     Text(SpotifyAuthConfig.redirectURI)
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
-                    Button("Copiar URI") { copyRedirectURI() }
+                    Button("Copy URI") { copyRedirectURI() }
                         .buttonStyle(.borderless)
                 }
-                Text("Registra esa Redirect URI exactamente. No uses localhost ni un Client Secret: el login es PKCE.")
+                Text("Register that Redirect URI exactly. Do not use localhost or a Client Secret: login is PKCE.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: 360, alignment: .leading)
 
-                TextField("Client ID de Spotify", text: $auth.clientID)
+                TextField("Spotify Client ID", text: $auth.clientID)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 320)
                 if clientIDLooksOff {
-                    Text("Esto no parece un Client ID (32 caracteres hex), pero puedes intentarlo.")
+                    Text("This does not look like a Client ID (32 hex characters), but you can still try it.")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
             }
 
             if auth.state == .authorizing {
-                ProgressView("Esperando a Spotify en el navegador…")
-                Button("Cancelar") { auth.cancelLogin() }
+                ProgressView("Waiting for Spotify in the browser…")
+                Button("Cancel") { auth.cancelLogin() }
             } else {
-                Button("Iniciar sesión con Spotify") {
+                Button("Log in with Spotify") {
                     Task { await auth.login() }
                 }
                 .buttonStyle(.borderedProminent)

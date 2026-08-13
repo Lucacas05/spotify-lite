@@ -1,6 +1,6 @@
-# Perfil de rendimiento — Fase 3
+# Performance profile — Phase 3
 
-Medición local del build `Release` en macOS, con la ventana oculta para activar `scenePhase != .active` y detener el polling:
+Local measurement of the `Release` build on macOS, with the window hidden so `scenePhase != .active` and polling stops:
 
 ```bash
 xcodebuild -project SpotifyLite.xcodeproj -scheme SpotifyLite \
@@ -10,18 +10,18 @@ osascript -e 'tell application "System Events" to set visible of process "Spotif
 top -l 2 -s 3 -pid "$(pgrep -x SpotifyLite)" -stats pid,cpu,mem,state
 ```
 
-Resultado observado el 13 de agosto de 2026, después de 12 segundos en background:
+Result observed on 13 August 2026, after 12 seconds in the background:
 
 ```text
 PID    %CPU MEM  STATE
 12338  0.0  45M  sleeping
 ```
 
-Decisiones aplicadas para cumplir el objetivo:
+Decisions applied to meet the target:
 
-- El polling de playback se cancela cuando la escena deja de estar activa.
-- El icono de menu bar es opt-in y está desactivado por defecto.
-- La caché de carátulas reserva solo 2 MB de RAM y conserva 50 MB en disco.
-- Las listas usan `LazyVStack`.
+- Playback polling is cancelled when the scene is no longer active.
+- The menu bar icon is opt-in and disabled by default.
+- Artwork cache reserves only 2 MB of RAM and keeps 50 MB on disk.
+- Lists use `LazyVStack`.
 
-La medición debe repetirse con Instruments (Allocations + Time Profiler) en la máquina usada para preparar cada release; el consumo varía por versión de macOS y contenido cargado.
+The measurement should be repeated with Instruments (Allocations + Time Profiler) on the machine used to prepare each release; consumption varies by macOS version and loaded content.

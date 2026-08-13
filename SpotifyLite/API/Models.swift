@@ -49,7 +49,7 @@ struct Track: Decodable, Identifiable {
     var artistNames: String { artists.map(\.name).joined(separator: ", ") }
     var artworkURL: URL? {
         guard let images = album?.images, !images.isEmpty else { return nil }
-        // La más pequeña ≥ 64 px basta para listas.
+        // The smallest ≥ 64 px is enough for lists.
         let sorted = images.sorted { ($0.width ?? 0) < ($1.width ?? 0) }
         return (sorted.first { ($0.width ?? 0) >= 64 } ?? sorted.last).flatMap { URL(string: $0.url) }
     }
@@ -59,14 +59,14 @@ struct Track: Decodable, Identifiable {
     }
 }
 
-/// Item de Liked Songs: envuelve el track, que puede ser null
-/// (tracks eliminados o locales).
+/// Liked Songs item: wraps the track, which can be null
+/// (deleted or local tracks).
 struct TrackItem: Decodable {
     let track: Track?
 }
 
-/// Elemento paginado de playlist. La API actual usa la clave "item" tanto en
-/// el detalle inicial como en /playlists/{id}/items.
+/// Paginated playlist entry. The current API uses the "item" key both in
+/// the initial detail and in /playlists/{id}/items.
 struct PlaylistEntry: Decodable {
     let item: Track?
 }

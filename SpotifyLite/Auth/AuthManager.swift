@@ -21,8 +21,8 @@ enum SpotifyAuthConfig {
     static let clientIDDefaultsKey = "clientID"
 }
 
-/// Intercambio y refresh contra accounts.spotify.com. Sin estado; lo usan
-/// AuthManager (exchange) y SpotifyClient (refresh).
+/// Token exchange and refresh against accounts.spotify.com. Stateless; used by
+/// AuthManager (exchange) and SpotifyClient (refresh).
 enum TokenEndpoint {
     static func exchangeCode(_ code: String, verifier: String, clientID: String) async throws -> TokenSet {
         try await request(form: [
@@ -72,9 +72,9 @@ enum AuthError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingClientID:
-            return "Configura tu Client ID de Spotify antes de iniciar sesión."
+            return "Set your Spotify Client ID before logging in."
         case .tokenRequestFailed(let body):
-            return "Spotify rechazó la petición de token: \(body)"
+            return "Spotify rejected the token request: \(body)"
         }
     }
 }

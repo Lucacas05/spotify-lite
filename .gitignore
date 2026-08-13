@@ -4,8 +4,8 @@ build/
 xcuserdata/
 .DS_Store
 
-# Credenciales locales. El Client ID no es un secreto de OAuth (PKCE),
-# pero no debe versionarse: cada clon usa el suyo desde el Dashboard.
+# Local credentials. The Client ID is not an OAuth secret (PKCE),
+# but it should not be versioned: each clone uses its own from the Dashboard.
 .env
 .env.*
 Secrets.xcconfig

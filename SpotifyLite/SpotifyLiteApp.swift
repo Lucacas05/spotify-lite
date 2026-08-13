@@ -7,7 +7,7 @@ struct SpotifyLiteApp: App {
     @AppStorage("menuBarEnabled") private var menuBarEnabled = false
 
     init() {
-        // Caché de carátulas: mínima en RAM, 50 MB en disco.
+        // Artwork cache: minimal in RAM, 50 MB on disk.
         URLCache.shared = URLCache(memoryCapacity: 2 * 1024 * 1024,
                                    diskCapacity: 50 * 1024 * 1024)
     }

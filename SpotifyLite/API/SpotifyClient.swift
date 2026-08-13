@@ -13,15 +13,15 @@ enum SpotifyAPIError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notSignedIn: return "No hay sesión activa."
-        case .http(let code, let body): return "Spotify respondió \(code): \(body)"
-        case .emptyResponse: return "Spotify no devolvió datos."
+        case .notSignedIn: return "There is no active session."
+        case .http(let code, let body): return "Spotify responded \(code): \(body)"
+        case .emptyResponse: return "Spotify returned no data."
         }
     }
 }
 
-/// Capa HTTP de la Web API. Actor: serializa el refresh para que dos requests
-/// con token vencido no lo renueven en paralelo.
+/// Web API HTTP layer. Actor: serializes refresh so two requests with an
+/// expired token do not renew it in parallel.
 actor SpotifyClient {
     static let shared = SpotifyClient()
 
@@ -40,14 +40,14 @@ actor SpotifyClient {
         return value
     }
 
-    /// Para endpoints que responden 204 sin cuerpo (GET /me/player sin nada sonando).
+    /// For endpoints that respond 204 with no body (GET /me/player when nothing is playing).
     func getOptional<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T? {
         let data = try await send("GET", path: path, query: query, body: nil, allowRetry: true)
         guard !data.isEmpty else { return nil }
         return try decoder.decode(T.self, from: data)
     }
 
-    /// PUT/POST de los endpoints player, que responden 200/202/204 sin cuerpo útil.
+    /// PUT/POST player endpoints, which respond 200/202/204 with no useful body.
     func command(_ method: String, _ path: String,
                  query: [String: String] = [:], body: [String: Any]? = nil) async throws {
         _ = try await send(method, path: path, query: query, body: body, allowRetry: true)

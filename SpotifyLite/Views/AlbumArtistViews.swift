@@ -11,7 +11,7 @@ struct AlbumDetailView: View {
     var body: some View {
         Group {
             if let error {
-                ErrorStateView(title: "No se pudo cargar el álbum", message: error) {
+                ErrorStateView(title: "Could not load the album", message: error) {
                     Task { await load() }
                 }
             } else if let album {
@@ -20,20 +20,20 @@ struct AlbumDetailView: View {
                         HStack(alignment: .bottom, spacing: 20) {
                             RemoteArtwork(url: artworkURL(album.images), size: 180)
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("ÁLBUM")
+                                Text("ALBUM")
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
                                 Text(album.name)
                                     .font(.largeTitle.bold())
                                 Text(album.artists.map(\.name).joined(separator: ", "))
                                     .font(.title3)
-                                Text([album.releaseDate, "\(album.totalTracks) canciones"]
+                                Text([album.releaseDate, "\(album.totalTracks) songs"]
                                     .compactMap { $0 }.joined(separator: " · "))
                                     .foregroundStyle(.secondary)
                                 Button {
                                     Task { await player.play(contextURI: album.uri) }
                                 } label: {
-                                    Label("Reproducir", systemImage: "play.fill")
+                                    Label("Play", systemImage: "play.fill")
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .tint(.green)
@@ -53,7 +53,7 @@ struct AlbumDetailView: View {
                     .padding(.vertical, 20)
                 }
             } else {
-                ProgressView("Cargando álbum…")
+                ProgressView("Loading album…")
             }
         }
         .navigationTitle(album?.name ?? albumName)
@@ -82,7 +82,7 @@ struct ArtistDetailView: View {
     var body: some View {
         Group {
             if let error {
-                ErrorStateView(title: "No se pudo cargar el artista", message: error) {
+                ErrorStateView(title: "Could not load the artist", message: error) {
                     Task { await load() }
                 }
             } else if let artist {
@@ -92,24 +92,24 @@ struct ArtistDetailView: View {
                             RemoteArtwork(url: artworkURL(artist.images), size: 180)
                                 .clipShape(Circle())
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("ARTISTA")
+                                Text("ARTIST")
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
                                 Text(artist.name)
                                     .font(.largeTitle.bold())
                                 if let followers = artist.followers?.total {
-                                    Text("\(followers.formatted()) seguidores")
+                                    Text("\(followers.formatted()) followers")
                                         .foregroundStyle(.secondary)
                                 }
                             }
                         }
                         .padding(.horizontal, 20)
 
-                        Text("Canciones populares")
+                        Text("Popular songs")
                             .font(.title2.bold())
                             .padding(.horizontal, 20)
                         if tracks.isEmpty {
-                            ContentUnavailableView("Sin canciones disponibles", systemImage: "music.note")
+                            ContentUnavailableView("No songs available", systemImage: "music.note")
                         } else {
                             LazyVStack(spacing: 0) {
                                 ForEach(Array(tracks.enumerated()), id: \.offset) { _, track in
@@ -124,7 +124,7 @@ struct ArtistDetailView: View {
                     .padding(.vertical, 20)
                 }
             } else {
-                ProgressView("Cargando artista…")
+                ProgressView("Loading artist…")
             }
         }
         .navigationTitle(artist?.name ?? artistName)
@@ -175,7 +175,7 @@ struct ErrorStateView: View {
         } description: {
             Text(message)
         } actions: {
-            Button("Reintentar", action: retry)
+            Button("Retry", action: retry)
         }
     }
 }

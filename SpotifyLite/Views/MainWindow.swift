@@ -40,7 +40,7 @@ struct MainWindow: View {
             player.startPolling()
         }
         .onChange(of: scenePhase) { _, phase in
-            // Sin timers en background: 0% CPU en reposo.
+            // No timers in the background: 0% CPU at idle.
             if phase == .active { player.startPolling() } else { player.stopPolling() }
         }
         .onDisappear { player.stopPolling() }
@@ -67,14 +67,14 @@ struct MainWindow: View {
                 .lineLimit(1)
             Spacer()
             Menu {
-                Toggle("Icono en la barra de menús", isOn: $menuBarEnabled)
-                Menu("Apariencia") {
-                    Button("Sistema") { appearance = "system" }
-                    Button("Claro") { appearance = "light" }
-                    Button("Oscuro") { appearance = "dark" }
+                Toggle("Menu bar icon", isOn: $menuBarEnabled)
+                Menu("Appearance") {
+                    Button("System") { appearance = "system" }
+                    Button("Light") { appearance = "light" }
+                    Button("Dark") { appearance = "dark" }
                 }
                 Divider()
-                Button("Cerrar sesión") { auth.logout() }
+                Button("Log out") { auth.logout() }
             } label: {
                 Image(systemName: "ellipsis")
             }
@@ -95,20 +95,20 @@ struct MainWindow: View {
 
     private var keyboardShortcuts: some View {
         Group {
-            Button("Buscar") {
+            Button("Search") {
                 selection = .search
                 NotificationCenter.default.post(name: .focusSpotifySearch, object: nil)
             }
                 .keyboardShortcut("f", modifiers: .command)
-            Button("Ir a Buscar") { selection = .search }
+            Button("Go to Search") { selection = .search }
                 .keyboardShortcut("1", modifiers: .command)
-            Button("Ir a Liked Songs") { selection = .likedSongs }
+            Button("Go to Liked Songs") { selection = .likedSongs }
                 .keyboardShortcut("2", modifiers: .command)
-            Button("Reproducir o pausar") { Task { await player.togglePlayPause() } }
+            Button("Play or pause") { Task { await player.togglePlayPause() } }
                 .keyboardShortcut(.space, modifiers: [])
         }
-        // `hidden()` también desactiva los keyboard shortcuts. Mantener estos
-        // botones en la jerarquía de interacción, pero fuera del layout y AX.
+        // `hidden()` also disables keyboard shortcuts. Keep these buttons in
+        // the interaction hierarchy, but out of layout and accessibility.
         .frame(width: 0, height: 0)
         .opacity(0)
         .accessibilityHidden(true)
@@ -121,7 +121,7 @@ struct MainWindow: View {
                 .font(.callout)
                 .lineLimit(2)
             Spacer()
-            Button("Cerrar") { player.lastError = nil }
+            Button("Dismiss") { player.lastError = nil }
                 .buttonStyle(.plain)
         }
         .foregroundStyle(.white)

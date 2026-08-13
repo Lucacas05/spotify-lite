@@ -1,61 +1,61 @@
-# QA de reproducción y cola
+# Playback and queue QA
 
-Prueba manual realizada el 13 de agosto de 2026 con la app Debug autenticada y un dispositivo Spotify Connect activo.
+Manual test performed on 13 August 2026 with the authenticated Debug app and an active Spotify Connect device.
 
-## Funcionamiento verificado
+## Verified behavior
 
-- Doble clic en un resultado inicia la canción seleccionada.
-- Play/Pause cambia y refleja correctamente el estado.
-- `Reproducir siguiente` añade canciones a la cola en el orden enviado.
-- El popover de cola carga y actualiza los elementos de Spotify.
-- Siguiente consume los elementos añadidos manualmente.
+- Double-clicking a result starts the selected track.
+- Play/Pause toggles and correctly reflects the state.
+- `Play next` adds tracks to the queue in the order they were sent.
+- The queue popover loads and updates Spotify's items.
+- Next consumes the items added manually.
 
-Flujo probado:
+Flow tested:
 
-1. Reproducir `Instant Crush (feat. Julian Casablancas)`.
-2. Añadir `One More Time`, `Lose Yourself to Dance` y `Veridis Quo`.
-3. Verificar ese mismo orden en la cola.
-4. Avanzar entre las canciones y reanudar la reproducción.
+1. Play `Instant Crush (feat. Julian Casablancas)`.
+2. Add `One More Time`, `Lose Yourself to Dance`, and `Veridis Quo`.
+3. Verify that same order in the queue.
+4. Skip between tracks and resume playback.
 
-## Pendientes encontrados
+## Outstanding issues
 
-### P1 — Serializar comandos de reproducción y esperar estado confirmado
+### P1 — Serialize playback commands and wait for confirmed state
 
-Al pulsar Siguiente y Anterior rápidamente, la barra todavía mostraba la canción previa y los comandos terminaron en un estado distinto al esperado. El código solo espera 400 ms antes de refrescar y permite varios comandos simultáneos.
+When Next and Previous were pressed quickly, the bar still showed the previous track and the commands ended in a different state than expected. The code only waits 400 ms before refreshing and allows several concurrent commands.
 
-Implementación propuesta:
+Proposed implementation:
 
-- Añadir estado `commandInFlight` y desactivar temporalmente los controles afectados.
-- Serializar comandos player en un actor o una cola dedicada.
-- Después de un comando, consultar playback con backoff corto hasta observar el cambio o alcanzar un timeout.
-- Mostrar progreso discreto; si Spotify no confirma el cambio, recuperar el estado real y mostrar un error.
+- Add a `commandInFlight` state and temporarily disable the affected controls.
+- Serialize player commands in an actor or a dedicated queue.
+- After a command, poll playback with a short backoff until the change is observed or a timeout is reached.
+- Show discreet progress; if Spotify does not confirm the change, recover the real state and show an error.
 
-Esto también responde a una limitación oficial: Spotify indica que el orden de ejecución no está garantizado al combinar `Add to Queue`, `Next`, `Previous` y otros endpoints Player.
+This also addresses an official limitation: Spotify states that execution order is not guaranteed when combining `Add to Queue`, `Next`, `Previous`, and other Player endpoints.
 
-### P1 — Definir explícitamente el comportamiento de Anterior
+### P1 — Define Previous behavior explicitly
 
-Desde `Veridis Quo`, Anterior no regresó a `Lose Yourself to Dance`; Spotify volvió a `Instant Crush` y quedó pausado. La app actualmente delega completamente en `POST /me/player/previous` y no mantiene historial propio.
+From `Veridis Quo`, Previous did not return to `Lose Yourself to Dance`; Spotify went back to `Instant Crush` and stayed paused. The app currently delegates entirely to `POST /me/player/previous` and does not keep its own history.
 
-Alternativas:
+Alternatives:
 
-- Mantener la semántica nativa de Spotify. Es consistente con el dispositivo Connect, pero no garantiza volver al elemento anterior de la cola manual.
-- Mantener historial local y forzar `play(trackURI:)`. Da control determinista, pero puede reemplazar el contexto/cola de Spotify y desincronizarse si otro dispositivo controla la sesión.
+- Keep Spotify's native semantics. This stays consistent with the Connect device, but does not guarantee returning to the previous item in the manual queue.
+- Keep local history and force `play(trackURI:)`. This gives deterministic control, but can replace Spotify's context/queue and desync if another device controls the session.
 
-Recomendación: mantener la semántica oficial y mejorar el feedback/sincronización antes de inventar un historial paralelo.
+Recommendation: keep the official semantics and improve feedback/sync before inventing a parallel history.
 
-### P2 — Diferenciar cola manual de contexto/autoplay
+### P2 — Distinguish the manual queue from context/autoplay
 
-Después de los tres elementos manuales, Spotify devolvió varias repeticiones de `Instant Crush`. `GET /me/player/queue` entrega una sola lista y no identifica el origen de cada elemento, por lo que la UI actual mezcla cola manual, contexto y autoplay.
+After the three manual items, Spotify returned several repeats of `Instant Crush`. `GET /me/player/queue` returns a single list and does not identify the origin of each item, so the current UI mixes the manual queue, context, and autoplay.
 
-Mejora posible: marcar localmente los URI añadidos desde SpotifyLite y mostrar una sección “Añadido desde SpotifyLite”. Este marcado sería aproximado: se pierde al reiniciar y puede quedar obsoleto si otro dispositivo modifica la cola.
+Possible improvement: locally mark URIs added from SpotifyLite and show an “Added from SpotifyLite” section. This marking would be approximate: it is lost on restart and can become stale if another device modifies the queue.
 
-### P2 — Eliminar, reordenar o vaciar la cola
+### P2 — Remove, reorder, or clear the queue
 
-No está implementado y la Web API oficial expone únicamente lectura de cola y adición al final; no ofrece endpoints para eliminar, reordenar o vaciar elementos de la cola de reproducción.
+Not implemented. The official Web API only exposes queue reading and appending to the end; it has no endpoints to remove, reorder, or clear playback queue items.
 
-Alternativa parcial: mantener una cola propia y reemplazar la reproducción con una lista de URI. El coste es alto: deja de representar fielmente la cola compartida de Spotify Connect y puede sobrescribir el contexto actual.
+Partial alternative: keep a local queue and replace playback with a URI list. The cost is high: it no longer faithfully represents the shared Spotify Connect queue and can overwrite the current context.
 
-## Referencias oficiales
+## Official references
 
 - https://developer.spotify.com/documentation/web-api/reference/get-queue
 - https://developer.spotify.com/documentation/web-api/reference/add-to-queue

@@ -1,29 +1,29 @@
-# Plan: Spotify Player ligero para macOS (SwiftUI)
+# Plan: Lightweight Spotify player for macOS (SwiftUI)
 
-Un cliente de Spotify nativo para macOS, hecho con SwiftUI, que use pocos recursos (objetivo: < 50 MB de RAM, < 1% CPU en reposo) y con login vía OAuth oficial de Spotify — el usuario inicia sesión en la página de Spotify, nunca escribe su contraseña en la app.
+A native Spotify client for macOS, built with SwiftUI, that uses few resources (target: < 50 MB RAM, < 1% CPU at idle) and logs in via official Spotify OAuth — the user signs in on Spotify's page and never types their password in the app.
 
-## Requisitos previos
+## Prerequisites
 
-- macOS 14+ (Sonoma) como target. Xcode 16+.
-- Cuenta de Spotify **Premium** solo si se usa el playback local opcional (librespot); el modo control remoto funciona con los endpoints oficiales.
-- App registrada en el [Spotify Developer Dashboard](https://developer.spotify.com/dashboard):
-  - Redirect URI: `http://127.0.0.1:8888/callback` (loopback; desde 2025 Spotify solo documenta como seguros `https://` y loopback — los custom schemes dan `INVALID_CLIENT: Insecure redirect URI` en apps nuevas)
-  - Anotar el `Client ID` (no se necesita client secret gracias a PKCE).
+- macOS 14+ (Sonoma) as the target. Xcode 16+.
+- A Spotify **Premium** account only if optional local playback (librespot) is used; remote-control mode works with the official endpoints.
+- App registered in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard):
+  - Redirect URI: `http://127.0.0.1:8888/callback` (loopback; since 2025 Spotify only documents `https://` and loopback as safe — custom schemes return `INVALID_CLIENT: Insecure redirect URI` on new apps)
+  - Note the `Client ID` (no client secret is needed thanks to PKCE).
 
-## Decisiones clave
+## Key decisions
 
-| Decisión | Elección | Por qué |
+| Decision | Choice | Why |
 |---|---|---|
-| UI | SwiftUI puro | Nativo, ligero, sin Electron/Qt |
-| Auth | OAuth 2.0 Authorization Code + PKCE con navegador + servidor loopback local | Login en la página oficial de Spotify; loopback (`http://127.0.0.1`) es la única forma documentada como segura para desktop desde 2025, sin client secret |
-| Metadata / playlists / búsqueda | Spotify Web API con `URLSession` + `Codable` | Sin dependencias externas |
-| Playback | Control remoto vía Web API por defecto; librespot **externo** (instalado por el usuario con brew), opt-in y experimental | Spotify no ofrece SDK de playback para desktop; no embeber librespot mantiene lo publicado 100% API oficial |
-| Tokens | Keychain | Nunca en UserDefaults ni en disco plano |
-| Dependencias | Cero paquetes de terceros en Swift | Menos superficie, menos peso |
+| UI | Pure SwiftUI | Native, lightweight, no Electron/Qt |
+| Auth | OAuth 2.0 Authorization Code + PKCE with browser + local loopback server | Login on Spotify's official page; loopback (`http://127.0.0.1`) is the only form documented as safe for desktop since 2025, with no client secret |
+| Metadata / playlists / search | Spotify Web API with `URLSession` + `Codable` | No external dependencies |
+| Playback | Remote control via Web API by default; **external** librespot (installed by the user with brew), opt-in and experimental | Spotify does not offer a desktop playback SDK; not embedding librespot keeps the published app 100% official API |
+| Tokens | Keychain | Never in UserDefaults or on plain disk |
+| Dependencies | Zero third-party Swift packages | Smaller surface, smaller footprint |
 
-**Nota legal:** la app publicada usa solo la API oficial (control remoto). Usar librespot va contra los términos de servicio de Spotify (como todos los clientes no oficiales: Psst, ncspot, etc.); en la práctica se tolera, pero existe riesgo teórico de baneo de cuenta. Por eso el playback local es opt-in, requiere que el usuario instale librespot por su cuenta y se marca como experimental/no oficial.
+**Legal note:** the published app uses only the official API (remote control). Using librespot goes against Spotify's terms of service (like all unofficial clients: Psst, ncspot, etc.); in practice it is tolerated, but there is a theoretical risk of account bans. That is why local playback is opt-in, requires the user to install librespot themselves, and is marked as experimental/unofficial.
 
-## Arquitectura
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -44,143 +44,143 @@ Un cliente de Spotify nativo para macOS, hecho con SwiftUI, que use pocos recurs
 └───────────────┘         │ player endpoints
                   ┌───────┴───────────────────┐
                   │     PlayerEngine           │
-                  │  librespot externo (brew)  │
-                  │  opcional, proceso hijo    │
+                  │  external librespot (brew) │
+                  │  optional child process    │
                   │  + MPNowPlayingInfoCenter  │
                   └───────────────────────────┘
 ```
 
-Cómo suena la música: por defecto, la app controla la reproducción en cualquier dispositivo Spotify Connect activo vía Web API. Si el usuario activa el modo experimental y tiene librespot instalado (brew), la app lo lanza como proceso hijo registrado como dispositivo Connect "SpotifyLite", lo selecciona vía `PUT /me/player` y controla todo (play, pause, seek, cola) con los endpoints `player`. El audio sale por librespot directo a CoreAudio.
+How music plays: by default, the app controls playback on any active Spotify Connect device via the Web API. If the user enables experimental mode and has librespot installed (brew), the app launches it as a child process registered as a Connect device named "SpotifyLite", selects it via `PUT /me/player`, and controls everything (play, pause, seek, queue) with the `player` endpoints. Audio comes from librespot directly to CoreAudio.
 
-## Estructura del proyecto
+## Project structure
 
 ```
 SpotifyLite/
-├── SpotifyLiteApp.swift          # @main, escena principal
+├── SpotifyLiteApp.swift          # @main, main scene
 ├── Auth/
-│   ├── AuthManager.swift         # flujo PKCE, ASWebAuthenticationSession
+│   ├── AuthManager.swift         # PKCE flow, ASWebAuthenticationSession
 │   ├── PKCE.swift                # verifier/challenge (CryptoKit)
-│   └── KeychainStore.swift       # guardar/leer/borrar tokens
+│   └── KeychainStore.swift       # save/read/delete tokens
 ├── API/
-│   ├── SpotifyClient.swift       # capa HTTP: auth header, refresh, retry 429
-│   ├── Endpoints.swift           # rutas tipadas de la Web API
+│   ├── SpotifyClient.swift       # HTTP layer: auth header, refresh, retry 429
+│   ├── Endpoints.swift           # typed Web API routes
 │   └── Models/                   # Codable: Track, Album, Playlist, Device...
 ├── Player/
-│   ├── LibrespotLocator.swift    # detectar instalación vía brew, validar versión
-│   ├── LibrespotProcess.swift    # lanzar/supervisar el binario externo
-│   ├── PlayerEngine.swift        # estado de reproducción (polling Web API)
+│   ├── LibrespotLocator.swift    # detect brew install, validate version
+│   ├── LibrespotProcess.swift    # launch/supervise the external binary
+│   ├── PlayerEngine.swift        # playback state (Web API polling)
 │   └── NowPlayingBridge.swift    # MPNowPlayingInfoCenter, media keys
 ├── Views/
-│   ├── MainWindow.swift          # NavigationSplitView (sidebar + detalle)
+│   ├── MainWindow.swift          # NavigationSplitView (sidebar + detail)
 │   ├── LoginView.swift
 │   ├── SidebarView.swift         # Library, playlists
 │   ├── PlaylistDetailView.swift
 │   ├── SearchView.swift
-│   └── PlayerBarView.swift       # barra inferior: track, controles, volumen
-└── plan.md                       # este archivo
+│   └── PlayerBarView.swift       # bottom bar: track, controls, volume
+└── plan.md                       # this file
 ```
 
-## Fases
+## Phases
 
-### Fase 0 — Setup del proyecto (½ día)
+### Phase 0 — Project setup (½ day)
 
-- [x] Crear proyecto Xcode: app macOS, SwiftUI, bundle id `com.lucas.spotifylite`.
-- [x] Sin App Sandbox (necesario para lanzar el librespot externo del usuario); Hardened Runtime activado. Distribución: Developer ID + notarización, fuera del App Store.
-- [x] Registrar la app en el Spotify Developer Dashboard y guardar el Client ID.
+- [x] Create Xcode project: macOS app, SwiftUI, bundle id `com.lucas.spotifylite`.
+- [x] No App Sandbox (required to launch the user's external librespot); Hardened Runtime enabled. Distribution: Developer ID + notarization, outside the App Store.
+- [x] Register the app in the Spotify Developer Dashboard and save the Client ID.
 
-### Fase 1 — Login con OAuth de Spotify (1–2 días)
+### Phase 1 — Spotify OAuth login (1–2 days)
 
-El corazón de lo que pediste: al pulsar "Iniciar sesión", se abre la página oficial de Spotify; el usuario se autentica ahí y Spotify redirige de vuelta a la app.
+The core of what you asked for: tapping "Log in" opens Spotify's official page; the user authenticates there and Spotify redirects back to the app.
 
-- [x] `PKCE.swift`: generar `code_verifier` (64 chars aleatorios) y `code_challenge` (SHA256 + base64url) con CryptoKit.
+- [x] `PKCE.swift`: generate `code_verifier` (64 random chars) and `code_challenge` (SHA256 + base64url) with CryptoKit.
 - [x] `AuthManager.login()`:
-  - Construir URL de `https://accounts.spotify.com/authorize` con `client_id`, `response_type=code`, `redirect_uri=http://127.0.0.1:<puerto>/callback`, `code_challenge_method=S256`, `code_challenge` y `scope`.
+  - Build the `https://accounts.spotify.com/authorize` URL with `client_id`, `response_type=code`, `redirect_uri=http://127.0.0.1:<port>/callback`, `code_challenge_method=S256`, `code_challenge`, and `scope`.
   - Scopes: `user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative user-library-read user-read-private streaming`.
-  - Levantar un mini servidor HTTP local efímero en `127.0.0.1` (Network.framework) y abrir la URL en el navegador por defecto con `NSWorkspace.open` (si ya hay sesión de Spotify en el navegador, es un clic).
-  - En el callback HTTP, extraer `code`, responder una página de "vuelve a la app" y apagar el servidor.
-- [x] `AuthManager.exchangeCode()`: `POST https://accounts.spotify.com/api/token` con `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier`. Respuesta: `access_token` (expira en 1 h) + `refresh_token`.
-- [x] `KeychainStore`: guardar ambos tokens en el Keychain.
-- [x] Refresh automático: interceptor en `SpotifyClient` que renueva el token cuando expira (o ante un 401) con `grant_type=refresh_token`, serializado con un actor para evitar refreshes concurrentes.
-- [x] `LoginView`: pantalla inicial con botón "Iniciar sesión con Spotify"; al completar, pasar a `MainWindow`.
-- [x] Logout: borrar Keychain y volver a `LoginView`.
+  - Start an ephemeral local HTTP server on `127.0.0.1` (Network.framework) and open the URL in the default browser with `NSWorkspace.open` (if a Spotify session already exists in the browser, it is one click).
+  - On the HTTP callback, extract `code`, respond with a "return to the app" page, and shut the server down.
+- [x] `AuthManager.exchangeCode()`: `POST https://accounts.spotify.com/api/token` with `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier`. Response: `access_token` (expires in 1 h) + `refresh_token`.
+- [x] `KeychainStore`: save both tokens in the Keychain.
+- [x] Automatic refresh: interceptor in `SpotifyClient` that renews the token when it expires (or on a 401) with `grant_type=refresh_token`, serialized with an actor to avoid concurrent refreshes.
+- [x] `LoginView`: initial screen with a "Log in with Spotify" button; on completion, go to `MainWindow`.
+- [x] Logout: clear the Keychain and return to `LoginView`.
 
-**Criterio de salida:** abrir la app → login en la página de Spotify → la app muestra tu nombre de usuario (`GET /me`) y sobrevive reinicios sin pedir login de nuevo.
+**Exit criterion:** open the app → log in on Spotify's page → the app shows your username (`GET /me`) and survives restarts without asking to log in again.
 
-### Fase 2 — Biblioteca y búsqueda, modo control remoto (3–4 días)
+### Phase 2 — Library and search, remote-control mode (3–4 days)
 
-Con solo la Web API la app ya es útil: navega tu música y controla la reproducción en cualquier dispositivo activo (el cliente oficial, un parlante). Todo esto es 100% API oficial.
+With only the Web API the app is already useful: browse your music and control playback on any active device (the official client, a speaker). All of this is 100% official API.
 
-- [x] `SpotifyClient`: capa genérica `request<T: Codable>` con auth header, decodificación, manejo de 401 (refresh) y 429 (respetar `Retry-After`).
-- [x] Modelos `Codable` mínimos: `Track`, `Album`, `Artist`, `Playlist`, `PlaybackState`, `Device`.
-- [x] `SidebarView`: playlists del usuario (`GET /me/playlists`, paginado) + Liked Songs.
-- [x] `PlaylistDetailView`: tracks con `LazyVStack` (playlists de miles de canciones sin costo de memoria), carátulas con caché (`URLCache` configurado, ~50 MB en disco).
-- [x] `SearchView`: `GET /search` con debounce de 300 ms.
-- [x] `PlayerBarView`: track actual, play/pausa, siguiente/anterior, volumen, selector de dispositivo (`GET /me/player/devices`).
-- [x] Estado de reproducción: polling de `GET /me/player` cada 5 s cuando la ventana está activa (pausar el polling en background para no gastar CPU).
+- [x] `SpotifyClient`: generic `request<T: Codable>` layer with auth header, decoding, 401 handling (refresh), and 429 handling (honor `Retry-After`).
+- [x] Minimal `Codable` models: `Track`, `Album`, `Artist`, `Playlist`, `PlaybackState`, `Device`.
+- [x] `SidebarView`: user's playlists (`GET /me/playlists`, paginated) + Liked Songs.
+- [x] `PlaylistDetailView`: tracks with `LazyVStack` (playlists of thousands of songs without a memory cost), artwork with cache (`URLCache` configured, ~50 MB on disk).
+- [x] `SearchView`: `GET /search` with 300 ms debounce.
+- [x] `PlayerBarView`: current track, play/pause, next/previous, volume, device picker (`GET /me/player/devices`).
+- [x] Playback state: poll `GET /me/player` every 5 s when the window is active (pause polling in the background to save CPU).
 
-**Criterio de salida:** buscar una canción, sonarla en el dispositivo activo, controlar play/pausa/volumen desde la app.
+**Exit criterion:** search for a song, play it on the active device, control play/pause/volume from the app.
 
-> **Nota (actualizada en Fase 3, ago 2026):** las apps en dev mode registradas desde 2025 tienen límites particulares en la Web API: `/search` acepta `limit` ≤ 10, `/me/tracks` ≤ 50, y el endpoint antiguo `/playlists/{id}/tracks` ya no debe usarse. `GET /playlists/{id}` trae la primera página bajo `items`; las páginas restantes se cargan desde `GET /playlists/{id}/items` con `offset`. Cada entrada envuelve la canción en la clave `item` (no `track`). Verificado con una playlist de 343 canciones e implementado en `TrackListView`/`SearchView`.
+> **Note (updated in Phase 3, Aug 2026):** apps in dev mode registered since 2025 have particular Web API limits: `/search` accepts `limit` ≤ 10, `/me/tracks` ≤ 50, and the old `/playlists/{id}/tracks` endpoint should no longer be used. `GET /playlists/{id}` returns the first page under `items`; remaining pages are loaded from `GET /playlists/{id}/items` with `offset`. Each entry wraps the track in the `item` key (not `track`). Verified with a 343-track playlist and implemented in `TrackListView`/`SearchView`.
 
-### Fase 3 — Pulido, rendimiento y primer release (2–3 días)
+### Phase 3 — Polish, performance, and first release (2–3 days)
 
-El primer release es solo-control-remoto: 100% API oficial, sin librespot.
+The first release is remote-control only: 100% official API, no librespot.
 
-Antes de preparar el DMG, se publicará una beta técnica ejecutable desde el clon del repositorio. Esto permite seguir iterando y recibir feedback sin bloquear el avance por la firma y notarización. El repositorio deberá incluir instrucciones reproducibles para configurar el proyecto, registrar el redirect URI de Spotify, introducir el Client ID y ejecutar la app.
+Before preparing the DMG, a technical beta that can be run from the repository clone will be published. This lets iteration and feedback continue without blocking on signing and notarization. The repository must include reproducible instructions to configure the project, register the Spotify redirect URI, enter the Client ID, and run the app.
 
-- [x] Cola de reproducción y "reproducir siguiente".
-- [x] Vista de álbum y de artista.
-- [x] Atajos de teclado (espacio = play/pausa, ⌘F = buscar, ⌘1/2 = navegación).
-- [x] Ícono en menu bar opcional (track actual + controles) con `MenuBarExtra`.
-- [x] Perfilar rendimiento: 45 MB RAM y 0% CPU observados en reposo/background; repetir con Instruments antes del release (ver `PERFORMANCE.md`).
-- [x] Modo claro/oscuro, estados vacíos, manejo de errores visibles (sin conexión, token revocado, sin Premium).
-- [x] Barra de tiempo interactiva para la canción en reproducción: mostrar tiempo transcurrido y duración, interpolar el progreso entre consultas, permitir arrastrar para hacer seek y reconciliar después con el estado confirmado por Spotify.
-- [x] Beta técnica desde el clon: README, requisitos, configuración de OAuth/Client ID y pasos reproducibles para ejecutar la app.
-- [ ] Empaquetado posterior a la beta técnica: firma Developer ID, hardened runtime, notarización y DMG. El brew cask viene después, apuntando al mismo artefacto notarizado.
+- [x] Playback queue and "play next".
+- [x] Album and artist views.
+- [x] Keyboard shortcuts (space = play/pause, ⌘F = search, ⌘1/2 = navigation).
+- [x] Optional menu bar icon (current track + controls) with `MenuBarExtra`.
+- [x] Profile performance: 45 MB RAM and 0% CPU observed at idle/background; repeat with Instruments before release (see `PERFORMANCE.md`).
+- [x] Light/dark mode, empty states, visible error handling (offline, revoked token, no Premium).
+- [x] Interactive timeline for the playing track: show elapsed time and duration, interpolate progress between polls, allow dragging to seek, then reconcile with the state confirmed by Spotify.
+- [x] Technical beta from the clone: README, requirements, OAuth/Client ID setup, and reproducible steps to run the app.
+- [ ] Packaging after the technical beta: Developer ID signing, hardened runtime, notarization, and DMG. The brew cask comes later, pointing at the same notarized artifact.
 
-**Criterio de salida:** primero, beta técnica reproducible desde el clon; después, DMG notarizado, descargable e instalable, con la app completa en modo control remoto.
+**Exit criterion:** first, a technical beta reproducible from the clone; then a notarized, downloadable, installable DMG with the complete app in remote-control mode.
 
-### Fase 4 — Playback local con librespot externo (2–3 días, post-release)
+### Phase 4 — Local playback with external librespot (2–3 days, post-release)
 
-Opt-in y experimental: el usuario instala librespot por su cuenta (brew); la app nunca lo embebe.
+Opt-in and experimental: the user installs librespot themselves (brew); the app never embeds it.
 
-- [ ] `LibrespotLocator`: detectar la instalación sin depender del PATH de shell — buscar `brew` (fallback `/opt/homebrew/bin/brew`, `/usr/local/bin/brew`), resolver `brew --prefix librespot`, verificar que `<prefix>/bin/librespot` existe y es ejecutable.
-- [ ] Validar versión con `librespot --version`: bloquear si < 0.8.0 (mensaje "actualiza con `brew upgrade librespot`"); solo advertir si es mayor o no parseable.
-- [ ] Opt-in en Ajustes: toggle "Playback local (experimental)" con advertencia clara (cliente no oficial, riesgo teórico de baneo, requiere Premium).
-- [ ] Descubrimiento: el selector de dispositivos muestra "Esta Mac (configurar…)" cuando el modo no está activo; abre una hoja con instrucciones (`brew install librespot` copiable + botón "Volver a comprobar"). La app no ejecuta brew.
-- [ ] `LibrespotProcess`: lanzar con `Process` el binario externo:
+- [ ] `LibrespotLocator`: detect the install without depending on the shell PATH — look for `brew` (fallback `/opt/homebrew/bin/brew`, `/usr/local/bin/brew`), resolve `brew --prefix librespot`, verify that `<prefix>/bin/librespot` exists and is executable.
+- [ ] Validate version with `librespot --version`: block if < 0.8.0 (message "update with `brew upgrade librespot`"); only warn if it is newer or unparseable.
+- [ ] Opt-in in Settings: "Local playback (experimental)" toggle with a clear warning (unofficial client, theoretical ban risk, Premium required).
+- [ ] Discovery: the device picker shows "This Mac (set up…)" when the mode is off; opens a sheet with instructions (copyable `brew install librespot` + "Check again" button). The app does not run brew.
+- [ ] `LibrespotProcess`: launch the external binary with `Process`:
   - `librespot --name "SpotifyLite" --backend rodio --zeroconf-backend dns-sd --system-cache <Application Support>/SpotifyLite/librespot`.
-  - Auth: reusar el token PKCE de la app (scope `streaming`) vía `LIBRESPOT_ACCESS_TOKEN` en el entorno del proceso; `--enable-oauth` solo como fallback diagnóstico.
-  - Supervisión: si el proceso muere, reiniciar con backoff (3 intentos: 1 s/2 s/4 s); si sigue fallando, degradar a modo control remoto con banner y botón "Reintentar". Log a archivo en Application Support (sin tokens).
-- [ ] Al activarse, transferir la reproducción al dispositivo "SpotifyLite" (`PUT /me/player` con su device id).
-- [ ] Estado de reproducción: reutilizar el polling de la Fase 2 (el bridge de eventos `--onevent` queda como mejora futura).
-- [ ] `NowPlayingBridge`: `MPNowPlayingInfoCenter` (título, artista, carátula, posición) + `MPRemoteCommandCenter` (media keys del teclado, AirPods).
+  - Auth: reuse the app's PKCE token (`streaming` scope) via `LIBRESPOT_ACCESS_TOKEN` in the process environment; `--enable-oauth` only as a diagnostic fallback.
+  - Supervision: if the process dies, restart with backoff (3 attempts: 1 s/2 s/4 s); if it keeps failing, fall back to remote-control mode with a banner and a "Retry" button. Log to a file in Application Support (no tokens).
+- [ ] On activation, transfer playback to the "SpotifyLite" device (`PUT /me/player` with its device id).
+- [ ] Playback state: reuse Phase 2 polling (the `--onevent` event bridge remains a future improvement).
+- [ ] `NowPlayingBridge`: `MPNowPlayingInfoCenter` (title, artist, artwork, position) + `MPRemoteCommandCenter` (keyboard media keys, AirPods).
 
-**Criterio de salida:** con librespot instalado y el modo activado, la app reproduce audio por sí misma, responde a las media keys y aparece en el widget Now Playing de macOS; sin librespot, la app sigue completa en modo control remoto.
+**Exit criterion:** with librespot installed and the mode enabled, the app plays audio itself, responds to media keys, and appears in the macOS Now Playing widget; without librespot, the app remains complete in remote-control mode.
 
-## Mejoras futuras (sin estimación)
+## Future improvements (unestimated)
 
-- Bridge de eventos de librespot (`--onevent` + helper embebido que reenvía a la app por socket Unix): reemplaza el polling por eventos instantáneos e interpolación local de posición.
-- Brew cask (tras el primer DMG) y, si hace falta, Sparkle para updates automáticos fuera de brew.
+- librespot event bridge (`--onevent` + embedded helper that forwards to the app over a Unix socket): replaces polling with instant events and local position interpolation.
+- Brew cask (after the first DMG) and, if needed, Sparkle for automatic updates outside brew.
 
-## Riesgos y mitigaciones
+## Risks and mitigations
 
-| Riesgo | Impacto | Mitigación |
+| Risk | Impact | Mitigation |
 |---|---|---|
-| librespot deja de funcionar por cambios de Spotify | Sin audio propio | El modo control remoto (Fase 2) sigue funcionando; librespot tiene comunidad activa que lo repara rápido |
-| Baneo de cuenta por ToS | Pérdida de cuenta | Riesgo teórico y históricamente no ejercido contra usuarios; documentarlo en el README; ofrecer modo solo-control |
-| Rate limits de la Web API | UI lenta | Caché agresivo de metadata, polling solo con ventana activa, respetar `Retry-After` |
-| Sin cuenta Premium | Playback no funciona | Detectar `product != "premium"` en `GET /me` y limitar la app a modo control remoto con aviso claro |
-| Cuota de la Web API en modo development | Solo 25 usuarios autorizados | Suficiente para uso personal; pedir quota extension solo si se distribuye |
+| librespot stops working due to Spotify changes | No local audio | Remote-control mode (Phase 2) still works; librespot has an active community that patches it quickly |
+| Account ban due to ToS | Account loss | Theoretical risk and historically not enforced against users; document it in the README; offer control-only mode |
+| Web API rate limits | Slow UI | Aggressive metadata cache, poll only with the window active, honor `Retry-After` |
+| No Premium account | Playback does not work | Detect `product != "premium"` in `GET /me` and limit the app to remote-control mode with a clear notice |
+| Web API quota in development mode | Only 25 authorized users | Enough for personal use; request a quota extension only if distributing |
 
-## Estimación total
+## Total estimate
 
-~1.5 a 2 semanas a tiempo parcial hasta el primer release (fin de Fase 3, solo control remoto). La Fase 2 sola ya da una app útil en la primera semana. El playback local con librespot (Fase 4) suma 2–3 días en una versión posterior.
+~1.5 to 2 weeks part-time until the first release (end of Phase 3, remote control only). Phase 2 alone already yields a useful app in the first week. Local playback with librespot (Phase 4) adds 2–3 days in a later version.
 
-## Referencias
+## References
 
 - [Authorization Code Flow with PKCE — Spotify](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow)
 - [Spotify Web API Reference](https://developer.spotify.com/documentation/web-api)
 - [librespot](https://github.com/librespot-org/librespot)
-- [Psst](https://github.com/jpochyla/psst) — referencia de cliente ligero (Rust)
+- [Psst](https://github.com/jpochyla/psst) — lightweight client reference (Rust)
 - [ASWebAuthenticationSession — Apple](https://developer.apple.com/documentation/authenticationservices/aswebauthenticationsession)

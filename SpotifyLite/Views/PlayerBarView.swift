@@ -10,7 +10,7 @@ struct PlayerBarView: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            // Track actual
+            // Current track
             HStack(spacing: 10) {
                 AsyncImage(url: player.state?.item?.artworkURL) { image in
                     image.resizable()
@@ -21,7 +21,7 @@ struct PlayerBarView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(player.state?.item?.name ?? "Nada sonando")
+                    Text(player.state?.item?.name ?? "Nothing playing")
                         .lineLimit(1)
                     Text(player.state?.item?.artistNames ?? "")
                         .font(.caption)
@@ -35,7 +35,7 @@ struct PlayerBarView: View {
             Spacer()
 
             VStack(spacing: 6) {
-                // Controles
+                // Controls
                 HStack(spacing: 20) {
                     Button { Task { await player.previous() } } label: {
                         Image(systemName: "backward.fill")
@@ -61,7 +61,7 @@ struct PlayerBarView: View {
 
             Spacer()
 
-            // Volumen + dispositivo
+            // Volume + device
             HStack(spacing: 12) {
                 Button {
                     showingQueue.toggle()
@@ -69,7 +69,7 @@ struct PlayerBarView: View {
                     Image(systemName: "text.line.first.and.arrowtriangle.forward")
                 }
                 .buttonStyle(.plain)
-                .help("Cola de reproducción")
+                .help("Playback queue")
                 .popover(isPresented: $showingQueue, arrowEdge: .bottom) {
                     QueueView(player: player)
                 }
@@ -83,7 +83,7 @@ struct PlayerBarView: View {
 
                 Menu {
                     if player.devices.isEmpty {
-                        Text("Sin dispositivos activos")
+                        Text("No active devices")
                     }
                     ForEach(player.devices) { device in
                         Button {
@@ -96,7 +96,7 @@ struct PlayerBarView: View {
                         }
                     }
                     Divider()
-                    Button("Actualizar dispositivos") { Task { await player.loadDevices() } }
+                    Button("Refresh devices") { Task { await player.loadDevices() } }
                 } label: {
                     Image(systemName: "hifispeaker")
                 }
@@ -114,7 +114,7 @@ struct PlayerBarView: View {
         }
         .onChange(of: player.currentTrackIdentifier) { _, _ in
             guard isScrubbing else { return }
-            // Si Spotify cambió de canción mientras se arrastraba, cancelar scrub local.
+            // If Spotify changed tracks while dragging, cancel the local scrub.
             isScrubbing = false
             scrubbingTrackID = nil
         }
@@ -144,7 +144,7 @@ struct PlayerBarView: View {
             )
             .disabled(durationMs <= 0)
             .frame(minWidth: 160, maxWidth: .infinity)
-            .help("Posición de reproducción")
+            .help("Playback position")
 
             HStack {
                 Text(formatTime(milliseconds: displayedProgressMs))

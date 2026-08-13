@@ -1,32 +1,32 @@
-# Integración de librespot con una app macOS
+# Integrating librespot with a macOS app
 
-Hallazgos revisados el 12 de agosto de 2026, a partir del código de `librespot` v0.8.0, su wiki, Homebrew, Apple y la documentación OAuth de Spotify.
+Findings reviewed on 12 August 2026, based on `librespot` v0.8.0 source, its wiki, Homebrew, Apple, and Spotify OAuth documentation.
 
-## Resumen
+## Summary
 
-- Para Homebrew, la app debe encontrar `brew` sin asumir el `PATH` de una app GUI, comprobar que la fórmula está instalada y resolver `brew --prefix librespot`. Luego conviene ejecutar directamente `<opt-prefix>/bin/librespot` con `Process`.
-- Si la app ya hace OAuth PKCE, conviene reutilizar su access token. Librespot acepta `--access-token` y, en v0.8.0, también `LIBRESPOT_ACCESS_TOKEN`. El token debe tener el scope `streaming`.
-- `--enable-oauth` funciona, pero abre un segundo flujo OAuth propio de librespot y guarda sus credenciales en su caché. Lo dejaría como alternativa de fallback, no como flujo principal de SpotifyLite.
-- `--onevent` es el mecanismo correcto para recibir cambios sin consultar la Web API. Lanza un programa auxiliar y le pasa variables de entorno. No entrega un stream JSON directo por stdout.
-- La versión estable actual de la fórmula Homebrew y del release upstream es `0.8.0`. Hay que verificar la versión real con `librespot --version`, no solo con el nombre de la fórmula.
+- For Homebrew, the app must find `brew` without assuming a GUI app's `PATH`, check that the formula is installed, and resolve `brew --prefix librespot`. Then it should run `<opt-prefix>/bin/librespot` directly with `Process`.
+- If the app already does OAuth PKCE, reuse its access token. Librespot accepts `--access-token` and, in v0.8.0, also `LIBRESPOT_ACCESS_TOKEN`. The token must have the `streaming` scope.
+- `--enable-oauth` works, but opens a second OAuth flow owned by librespot and stores credentials in its cache. I would leave it as a fallback, not as SpotifyLite's primary flow.
+- `--onevent` is the right mechanism for receiving changes without polling the Web API. It launches a helper program and passes environment variables. It does not deliver a JSON stream on stdout.
+- The current stable version of the Homebrew formula and upstream release is `0.8.0`. Verify the real version with `librespot --version`, not only with the formula name.
 
-## 1. Detectar y lanzar el binario desde Swift
+## 1. Detect and launch the binary from Swift
 
-### Detección
+### Detection
 
-Una app lanzada desde Finder/Xcode no necesariamente hereda el `PATH` del shell del usuario. No conviene depender solo de `which librespot`.
+An app launched from Finder/Xcode does not necessarily inherit the user's shell `PATH`. Depending only on `which librespot` is a bad idea.
 
-El flujo recomendado es:
+The recommended flow is:
 
-1. Buscar `brew` en el `PATH` disponible y, como fallback, en `/opt/homebrew/bin/brew` (Apple Silicon) y `/usr/local/bin/brew` (Intel).
-2. Ejecutar `brew list --formula --versions librespot`. Si sale vacío o termina con error, la fórmula no está disponible para la app.
-3. Ejecutar `brew --prefix librespot` y derivar `prefix/bin/librespot`.
-4. Comprobar que el archivo existe y es ejecutable.
-5. Ejecutar ese binario con `--version` y validar la versión antes de iniciar playback.
+1. Look for `brew` in the available `PATH` and, as a fallback, in `/opt/homebrew/bin/brew` (Apple Silicon) and `/usr/local/bin/brew` (Intel).
+2. Run `brew list --formula --versions librespot`. If it is empty or exits with an error, the formula is not available to the app.
+3. Run `brew --prefix librespot` and derive `prefix/bin/librespot`.
+4. Check that the file exists and is executable.
+5. Run that binary with `--version` and validate the version before starting playback.
 
-Homebrew documenta `brew list --versions` para consultar versiones instaladas y recomienda `brew --prefix <formula>` para obtener el `opt` prefix estable, en vez de hardcodear una ruta dentro de `Cellar`. La fórmula `librespot` no es keg-only, así que normalmente también existe el enlace `<brew-prefix>/bin/librespot`, pero el `opt` prefix es una resolución más estable.
+Homebrew documents `brew list --versions` for installed versions and recommends `brew --prefix <formula>` to get the stable `opt` prefix, instead of hardcoding a path inside `Cellar`. The `librespot` formula is not keg-only, so `<brew-prefix>/bin/librespot` usually exists as well, but the `opt` prefix is a more stable resolution.
 
-En Swift, el patrón mínimo es este (sin shell):
+In Swift, the minimal pattern is this (no shell):
 
 ~~~
 let process = Process()
@@ -48,107 +48,107 @@ let stderr = Pipe()
 process.standardOutput = stdout
 process.standardError = stderr
 process.terminationHandler = { process in
-    // registrar salida, código de terminación y decidir si se reinicia
+    // log output, termination code, and decide whether to restart
 }
 
 try process.run()
 ~~~
 
-`Process.arguments` ya pasa un arreglo `argv`; no necesita comillas de shell y tampoco expande `$HOME` o `~`. Para los logs, lee `standardError` de forma asíncrona para no llenar el pipe y bloquear al hijo. Los eventos de playback no llegan directamente por `standardOutput`; llegan al programa indicado por `--onevent`.
+`Process.arguments` already passes an `argv` array; it does not need shell quotes and does not expand `$HOME` or `~`. For logs, read `standardError` asynchronously so the pipe does not fill and block the child. Playback events do not arrive directly on `standardOutput`; they go to the program specified by `--onevent`.
 
-### Ojo con App Sandbox
+### Watch out for App Sandbox
 
-El `plan.md` actual activa App Sandbox, pero una dependencia en `/opt/homebrew` o `/usr/local` entra en conflicto con ese diseño. Apple documenta que una app sandboxed puede ejecutar programas dentro de su app bundle, su sandbox container o un app group, y que el proceso hijo hereda el sandbox del padre. Las entitlements de archivos seleccionados no convierten una ruta Homebrew arbitraria en un ejecutable permitido.
+The current `plan.md` enables App Sandbox, but a dependency in `/opt/homebrew` or `/usr/local` conflicts with that design. Apple documents that a sandboxed app can run programs inside its app bundle, its sandbox container, or an app group, and that the child process inherits the parent's sandbox. User-selected file entitlements do not turn an arbitrary Homebrew path into an allowed executable.
 
-Por eso hay dos alternativas reales:
+So there are two real alternatives:
 
-- Distribución directa, fuera del Mac App Store: quitar App Sandbox, conservar Hardened Runtime, firmar/notarizar la app y tratar Homebrew como dependencia opcional. Es la opción compatible con “el usuario instala librespot con brew”.
-- App Sandbox/Mac App Store: embebir una copia propia de librespot y del bridge de eventos dentro del bundle, firmarlos junto con la app y lanzarlos como helpers. Es más reproducible, pero la app debe hacerse cargo de actualizar esa copia.
+- Direct distribution, outside the Mac App Store: remove App Sandbox, keep Hardened Runtime, sign/notarize the app, and treat Homebrew as an optional dependency. This is the option compatible with “the user installs librespot with brew”.
+- App Sandbox/Mac App Store: embed your own copy of librespot and the event bridge in the bundle, sign them with the app, and launch them as helpers. That is more reproducible, but the app must own updating that copy.
 
-No asumiría que una build sandboxed pueda lanzar libremente `/opt/homebrew/opt/librespot/bin/librespot`.
+I would not assume a sandboxed build can freely launch `/opt/homebrew/opt/librespot/bin/librespot`.
 
-## 2. OAuth propio o token de la app
+## 2. librespot's own OAuth or the app token
 
 ### `--enable-oauth`
 
-El flujo integrado de librespot:
+librespot's built-in flow:
 
-- abre el navegador para que el usuario autorice;
-- usa un callback loopback `http://127.0.0.1:<puerto>/login` (por defecto, `5588`);
-- solicita el conjunto de scopes que librespot tiene configurado, que incluye `streaming` y varios scopes de la app de Spotify;
-- si se proporciona `--cache` o `--system-cache`, guarda credenciales reutilizables para no repetir el login.
+- opens the browser so the user can authorize;
+- uses a loopback callback `http://127.0.0.1:<port>/login` (default `5588`);
+- requests the scope set librespot has configured, which includes `streaming` and several Spotify app scopes;
+- if `--cache` or `--system-cache` is provided, stores reusable credentials so login is not repeated.
 
-Es cómodo para ejecutar librespot solo desde la terminal, pero en SpotifyLite duplica el login que ya hace la app y pone el almacenamiento de credenciales fuera del Keychain. Tampoco usa el callback personalizado de la app (`spotifylite://callback`); es un flujo separado de librespot.
+It is convenient for running librespot from the terminal, but in SpotifyLite it duplicates the login the app already does and puts credential storage outside the Keychain. It also does not use the app's custom callback (`spotifylite://callback`); it is a separate librespot flow.
 
-### Reutilizar el token de la app
+### Reuse the app token
 
-La wiki de librespot documenta explícitamente `--access-token` y dice que el token debe incluir el scope `streaming`. La fuente v0.8.0 crea `Credentials::with_access_token(...)` con ese valor. El binario también acepta opciones largas desde variables `LIBRESPOT_*`, así que se puede usar `LIBRESPOT_ACCESS_TOKEN` en el entorno del `Process` en vez de poner el token en `arguments`.
+The librespot wiki explicitly documents `--access-token` and says the token must include the `streaming` scope. The v0.8.0 source creates `Credentials::with_access_token(...)` with that value. The binary also accepts long options from `LIBRESPOT_*` variables, so `LIBRESPOT_ACCESS_TOKEN` can be used in the `Process` environment instead of putting the token in `arguments`.
 
-La recomendación para este proyecto es:
+The recommendation for this project is:
 
-1. Mantener el OAuth PKCE de SpotifyLite y pedir `streaming` junto con los scopes de Web API que la app necesite.
-2. Comprobar que el `scope` devuelto por Spotify contiene `streaming` antes de arrancar librespot.
-3. Pasar el access token fresco mediante `LIBRESPOT_ACCESS_TOKEN`; si no se quiere usar el entorno, pasar `--access-token <token>`.
-4. Usar `--system-cache <directorio>` para que librespot guarde su credencial reutilizable y el volumen. El directorio contiene material sensible: debe tener permisos restrictivos.
-5. Renovar el token en la app. Spotify documenta que el access token dura una hora; librespot no recibe el refresh token por CLI. Si el proceso necesita autenticarse de nuevo, hay que lanzarlo con el token fresco o dejar que use la credencial reutilizable de su caché.
+1. Keep SpotifyLite's OAuth PKCE and request `streaming` together with the Web API scopes the app needs.
+2. Check that the `scope` returned by Spotify contains `streaming` before starting librespot.
+3. Pass the fresh access token via `LIBRESPOT_ACCESS_TOKEN`; if you do not want to use the environment, pass `--access-token <token>`.
+4. Use `--system-cache <directory>` so librespot stores its reusable credential and volume. The directory contains sensitive material: it must have restrictive permissions.
+5. Renew the token in the app. Spotify documents that the access token lasts one hour; librespot does not receive the refresh token via CLI. If the process needs to authenticate again, launch it with a fresh token or let it use the reusable credential from its cache.
 
-Si se pasan un token y `--enable-oauth` al mismo tiempo, en v0.8.0 el token gana: el código procesa primero `access-token` y solo entra al OAuth interactivo cuando no hay credenciales. No conviene mezclar ambos modos; elige uno.
+If a token and `--enable-oauth` are passed at the same time, in v0.8.0 the token wins: the code processes `access-token` first and only enters interactive OAuth when there are no credentials. Do not mix both modes; pick one.
 
-El entorno evita que el secreto quede en la lista de argumentos y el código de librespot lo enmascara en sus logs, pero no es un almacén seguro por sí mismo. El token y `credentials.json` deben tratarse como secretos y nunca deben aparecer en logs de SpotifyLite.
+The environment keeps the secret out of the argument list, and librespot's code masks it in its logs, but it is not a secure store by itself. The token and `credentials.json` must be treated as secrets and must never appear in SpotifyLite logs.
 
-### Comparación rápida
+### Quick comparison
 
-| Opción | Ventaja | Costo/riesgo |
+| Option | Advantage | Cost/risk |
 | --- | --- | --- |
-| OAuth de librespot | Menos código propio para el primer login; caché integrada | Segundo login, callback loopback propio, scopes más amplios y caché fuera del Keychain |
-| Token OAuth de SpotifyLite | Un solo login, un solo refresh y una sola sesión de usuario | La app debe refrescar el token y pasárselo de forma segura |
+| librespot OAuth | Less custom code for first login; built-in cache | Second login, its own loopback callback, broader scopes, and cache outside the Keychain |
+| SpotifyLite OAuth token | One login, one refresh, one user session | The app must refresh the token and pass it securely |
 
-Para SpotifyLite elegiría el segundo camino. Dejaría `--enable-oauth` solo como fallback diagnóstico o para una build de prueba.
+For SpotifyLite I would choose the second path. I would leave `--enable-oauth` only as a diagnostic fallback or for a test build.
 
-Nota: librespot requiere una cuenta Spotify Premium y su propio README advierte que el uso de este cliente puede estar restringido por Spotify. Esto es aparte de que el flujo técnico funcione.
+Note: librespot requires a Spotify Premium account, and its own README warns that use of this client may be restricted by Spotify. That is separate from the technical flow working.
 
-## 3. Eventos sin polling
+## 3. Events without polling
 
 ### `--onevent`
 
-La wiki de eventos describe `--onevent=/ruta/al/programa`. Cada vez que se genera un evento, librespot lanza ese programa y le pasa variables de entorno. Las más útiles para la UI son:
+The events wiki describes `--onevent=/path/to/program`. Each time an event is generated, librespot launches that program and passes environment variables. The most useful ones for the UI are:
 
-- `PLAYER_EVENT=track_changed`, con `TRACK_ID`, `URI`, `NAME`, `COVERS` y metadatos adicionales.
-- `PLAYER_EVENT=playing` o `paused`, con `TRACK_ID` y `POSITION_MS`.
-- `PLAYER_EVENT=seeked` o `position_correction`, con `TRACK_ID` y `POSITION_MS`.
-- `PLAYER_EVENT=end_of_track`, `stopped`, `loading`, `preloading` y `unavailable`, normalmente con `TRACK_ID`.
-- `PLAYER_EVENT=volume_changed`, con `VOLUME`.
-- `session_connected` y `session_disconnected`, con `USER_NAME` y `CONNECTION_ID`.
+- `PLAYER_EVENT=track_changed`, with `TRACK_ID`, `URI`, `NAME`, `COVERS`, and additional metadata.
+- `PLAYER_EVENT=playing` or `paused`, with `TRACK_ID` and `POSITION_MS`.
+- `PLAYER_EVENT=seeked` or `position_correction`, with `TRACK_ID` and `POSITION_MS`.
+- `PLAYER_EVENT=end_of_track`, `stopped`, `loading`, `preloading`, and `unavailable`, usually with `TRACK_ID`.
+- `PLAYER_EVENT=volume_changed`, with `VOLUME`.
+- `session_connected` and `session_disconnected`, with `USER_NAME` and `CONNECTION_ID`.
 
-El bridge puede ser un ejecutable pequeño dentro de la app que convierta esas variables a una línea JSON y la envíe a SpotifyLite mediante un Unix domain socket, pipe o el IPC que elijamos. El bridge debe terminar rápido después de entregar el evento.
+The bridge can be a small executable inside the app that converts those variables into a JSON line and sends it to SpotifyLite over a Unix domain socket, pipe, or whichever IPC we choose. The bridge must exit quickly after delivering the event.
 
-Hay una sutileza importante: la documentación llama “non-blocking” a estos eventos porque no bloquean los hilos de playback, pero el código sí espera a que termine el programa auxiliar y serializa los eventos para mantener el orden. Un bridge lento puede retrasar los siguientes eventos. No uses aquí un proceso que se quede abierto esperando.
+There is an important subtlety: the documentation calls these events “non-blocking” because they do not block playback threads, but the code does wait for the helper to finish and serializes events to preserve order. A slow bridge can delay later events. Do not use a process that stays open waiting here.
 
-`--emit-sink-events` es opcional y agrega eventos bloqueantes del sink: `PLAYER_EVENT=sink` con `SINK_STATUS=running`, `temporarily_closed` o `closed`. No hace falta para reflejar track/play/pause y puede bloquear el hilo del reproductor; lo dejaría fuera del mínimo.
+`--emit-sink-events` is optional and adds blocking sink events: `PLAYER_EVENT=sink` with `SINK_STATUS=running`, `temporarily_closed`, or `closed`. It is not needed to reflect track/play/pause and can block the player thread; I would leave it out of the minimum.
 
-### Qué no cubre
+### What it does not cover
 
-El binario standalone ignora `PlayerEvent::PositionChanged`; la propia fuente lo comenta. Por eso `--onevent` no manda un tick continuo para cada cambio de milisegundo.
+The standalone binary ignores `PlayerEvent::PositionChanged`; the source itself comments on this. That is why `--onevent` does not send a continuous tick for every millisecond change.
 
-La UI puede funcionar sin polling así:
+The UI can work without polling like this:
 
-1. En `track_changed`, actualiza pista, duración y portada.
-2. En `playing`, `paused`, `seeked` y `position_correction`, guarda `POSITION_MS` y un `ContinuousClock` local.
-3. Mientras el estado sea `playing`, interpola la posición localmente con el tiempo transcurrido.
-4. Congela la posición en `paused` y resetea en `stopped`/`end_of_track`.
-5. Usa `position_correction` como resync. Un chequeo de recuperación ocasional puede ser útil si el bridge se cae, pero no hace falta consultar la Web API cada cinco segundos para el caso normal.
+1. On `track_changed`, update track, duration, and artwork.
+2. On `playing`, `paused`, `seeked`, and `position_correction`, store `POSITION_MS` and a local `ContinuousClock`.
+3. While the state is `playing`, interpolate position locally with elapsed time.
+4. Freeze the position on `paused` and reset on `stopped`/`end_of_track`.
+5. Use `position_correction` as a resync. An occasional recovery check can help if the bridge dies, but polling the Web API every five seconds is not needed for the normal case.
 
-En otras palabras: sí se pueden reflejar cambios de reproducción sin polling; no existe un evento standalone que por sí solo entregue una posición continua.
+In other words: yes, playback changes can be reflected without polling; there is no standalone event that by itself delivers a continuous position.
 
-### Detalle práctico de la ruta del bridge
+### Practical detail of the bridge path
 
-La implementación v0.8.0 parte la cadena de `--onevent` por espacios antes de ejecutar el comando. Pasa una ruta absoluta sin espacios o usa un wrapper con una ruta segura; no confíes en comillas de shell dentro del valor de `--onevent`.
+The v0.8.0 implementation splits the `--onevent` string on spaces before running the command. Pass an absolute path with no spaces, or use a wrapper with a safe path; do not rely on shell quotes inside the `--onevent` value.
 
-## 4. Versión y flags mínimos
+## 4. Version and minimum flags
 
-La última release upstream consultada es [v0.8.0, publicada el 10 de noviembre de 2025](https://github.com/librespot-org/librespot/releases/tag/v0.8.0). La [fórmula Homebrew](https://formulae.brew.sh/formula/librespot) también marca `0.8.0` como estable. En Homebrew para macOS se compila con `rodio-backend`, `with-dns-sd` y raíces TLS del sistema; `rodio` usa CoreAudio en macOS.
+The latest upstream release consulted is [v0.8.0, published 10 November 2025](https://github.com/librespot-org/librespot/releases/tag/v0.8.0). The [Homebrew formula](https://formulae.brew.sh/formula/librespot) also marks `0.8.0` as stable. On Homebrew for macOS it is built with `rodio-backend`, `with-dns-sd`, and system TLS roots; `rodio` uses CoreAudio on macOS.
 
-Con el token de SpotifyLite, el mínimo razonable es:
+With the SpotifyLite token, a reasonable minimum is:
 
 ~~~
 librespot
@@ -156,40 +156,40 @@ librespot
   --backend rodio
   --zeroconf-backend dns-sd
   --system-cache <Application Support>/SpotifyLite/librespot
-  --onevent <ruta-absoluta-al-bridge-sin-espacios>
+  --onevent <absolute-bridge-path-without-spaces>
 ~~~
 
-Y en `Process.environment`:
+And in `Process.environment`:
 
 ~~~
-LIBRESPOT_ACCESS_TOKEN=<access token fresco con scope streaming>
+LIBRESPOT_ACCESS_TOKEN=<fresh access token with streaming scope>
 ~~~
 
-No agregaría `--disable-discovery`, porque el objetivo es que el dispositivo aparezca en Spotify Connect. `--cache <ruta>` es opcional: además de credenciales guarda archivos de audio; para empezar basta `--system-cache`. `--bitrate 320`, `--device-type computer`, normalización y volumen inicial son decisiones de producto, no requisitos de lanzamiento.
+I would not add `--disable-discovery`, because the goal is for the device to appear in Spotify Connect. `--cache <path>` is optional: besides credentials it stores audio files; `--system-cache` is enough to start. `--bitrate 320`, `--device-type computer`, normalization, and initial volume are product decisions, not launch requirements.
 
-Si se usa el OAuth propio, cambia la autenticación por `--enable-oauth` y conserva `--system-cache`; no pases `LIBRESPOT_ACCESS_TOKEN` a la vez. Solo usa `--oauth-port` si el puerto 5588 está ocupado o necesitas el modo headless.
+If using librespot's own OAuth, switch authentication to `--enable-oauth` and keep `--system-cache`; do not pass `LIBRESPOT_ACCESS_TOKEN` at the same time. Only use `--oauth-port` if port 5588 is in use or you need headless mode.
 
-Finalmente, ejecuta `librespot --version` desde la app y registra el resultado (sin tokens). Si el usuario tiene `--HEAD` o una versión distinta, muestra un diagnóstico claro: las opciones y el protocolo interno pueden cambiar.
+Finally, run `librespot --version` from the app and log the result (no tokens). If the user has `--HEAD` or a different version, show a clear diagnosis: options and the internal protocol can change.
 
-## Fuentes primarias
+## Primary sources
 
-- [Homebrew: fórmula librespot](https://formulae.brew.sh/formula/librespot)
+- [Homebrew: librespot formula](https://formulae.brew.sh/formula/librespot)
 - [Homebrew: brew(1), `list --versions`](https://docs.brew.sh/Manpage)
 - [Homebrew: `brew --prefix <formula>`](https://docs.brew.sh/How-to-Build-Software-Outside-Homebrew-with-Homebrew-keg-only-Dependencies)
-- [Apple: `Process.arguments`, `executableURL` y pipes](https://developer.apple.com/documentation/foundation/process/arguments)
+- [Apple: `Process.arguments`, `executableURL`, and pipes](https://developer.apple.com/documentation/foundation/process/arguments)
 - [Apple: App Sandbox](https://developer.apple.com/documentation/security/protecting-user-data-with-app-sandbox)
-- [Apple: acceso a archivos desde App Sandbox](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox)
+- [Apple: accessing files from App Sandbox](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox)
 - [librespot Wiki: Options](https://github.com/librespot-org/librespot/wiki/Options)
 - [librespot Wiki: Authentication / OAuth](https://github.com/librespot-org/librespot/wiki/Options#oauth)
 - [librespot Wiki: Access token](https://github.com/librespot-org/librespot/wiki/Options#access-token)
 - [librespot Wiki: Events](https://github.com/librespot-org/librespot/wiki/Events)
 - [librespot v0.8.0: `src/main.rs`](https://github.com/librespot-org/librespot/blob/v0.8.0/src/main.rs#L700-L737)
-- [librespot v0.8.0: caché y precedencia de credenciales](https://github.com/librespot-org/librespot/blob/v0.8.0/src/main.rs#L1136-L1232)
-- [librespot v0.8.0: guardado de credenciales reutilizables](https://github.com/librespot-org/librespot/blob/v0.8.0/core/src/session.rs#L206-L257)
-- [librespot v0.8.0: OAuth interactivo](https://github.com/librespot-org/librespot/blob/v0.8.0/src/main.rs#L1945-L1969)
-- [librespot v0.8.0: eventos del binario](https://github.com/librespot-org/librespot/blob/v0.8.0/src/player_event_handler.rs#L297-L361)
-- [librespot README: caché y credenciales](https://github.com/librespot-org/librespot/blob/v0.8.0/README.md#usage)
+- [librespot v0.8.0: cache and credential precedence](https://github.com/librespot-org/librespot/blob/v0.8.0/src/main.rs#L1136-L1232)
+- [librespot v0.8.0: reusable credential storage](https://github.com/librespot-org/librespot/blob/v0.8.0/core/src/session.rs#L206-L257)
+- [librespot v0.8.0: interactive OAuth](https://github.com/librespot-org/librespot/blob/v0.8.0/src/main.rs#L1945-L1969)
+- [librespot v0.8.0: binary events](https://github.com/librespot-org/librespot/blob/v0.8.0/src/player_event_handler.rs#L297-L361)
+- [librespot README: cache and credentials](https://github.com/librespot-org/librespot/blob/v0.8.0/README.md#usage)
 - [Spotify: Authorization Code with PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow)
 - [Spotify: Access token](https://developer.spotify.com/documentation/web-api/concepts/access-token)
 - [Spotify: scopes](https://developer.spotify.com/documentation/web-api/concepts/scopes)
-- [Issue upstream sobre `--onevent` y permisos del programa](https://github.com/librespot-org/librespot/issues/367)
+- [Upstream issue on `--onevent` and program permissions](https://github.com/librespot-org/librespot/issues/367)

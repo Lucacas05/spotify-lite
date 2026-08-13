@@ -1,8 +1,8 @@
 import Foundation
 import Network
 
-/// Mini servidor HTTP en 127.0.0.1 que espera el redirect de Spotify con el
-/// authorization code, responde una página de "vuelve a la app" y se apaga.
+/// Mini HTTP server on 127.0.0.1 that waits for Spotify's redirect with the
+/// authorization code, responds with a "return to the app" page, and shuts down.
 final class LoopbackServer: @unchecked Sendable {
     enum ServerError: Error {
         case portInUse
@@ -70,23 +70,23 @@ final class LoopbackServer: @unchecked Sendable {
 
         if let error {
             respond(connection, status: "200 OK", body: Self.page(
-                title: "Inicio de sesión cancelado",
-                message: "Spotify devolvió: \(error). Puedes cerrar esta pestaña e intentarlo de nuevo."))
+                title: "Sign-in cancelled",
+                message: "Spotify returned: \(error). You can close this tab and try again."))
             finish(.failure(ServerError.userDenied))
         } else if state != expectedState {
             respond(connection, status: "400 Bad Request", body: Self.page(
-                title: "Error de seguridad",
-                message: "El parámetro state no coincide. Cierra esta pestaña e intenta de nuevo."))
+                title: "Security error",
+                message: "The state parameter does not match. Close this tab and try again."))
             finish(.failure(ServerError.stateMismatch))
         } else if let code {
             respond(connection, status: "200 OK", body: Self.page(
-                title: "Listo",
-                message: "Ya iniciaste sesión. Vuelve a SpotifyLite — puedes cerrar esta pestaña."))
+                title: "You're all set",
+                message: "You're signed in. Return to SpotifyLite — you can close this tab."))
             finish(.success(code))
         } else {
             respond(connection, status: "400 Bad Request", body: Self.page(
-                title: "Callback inválido",
-                message: "No llegó el código de autorización. Cierra esta pestaña e intenta de nuevo."))
+                title: "Invalid callback",
+                message: "The authorization code did not arrive. Close this tab and try again."))
             finish(.failure(ServerError.badCallback))
         }
     }
@@ -111,7 +111,7 @@ final class LoopbackServer: @unchecked Sendable {
 
     private static func page(title: String, message: String) -> String {
         """
-        <!doctype html><html lang="es"><meta charset="utf-8">
+        <!doctype html><html lang="en"><meta charset="utf-8">
         <title>\(title) · SpotifyLite</title>
         <body style="font-family:-apple-system,sans-serif;display:grid;place-items:center;height:100vh;margin:0;background:#121212;color:#fff">
         <div style="text-align:center;max-width:26rem;padding:1rem">

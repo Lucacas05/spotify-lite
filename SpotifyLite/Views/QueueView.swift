@@ -6,13 +6,13 @@ struct QueueView: View {
     var body: some View {
         Group {
             if player.queueIsLoading && player.queue.isEmpty {
-                ProgressView("Cargando cola…")
+                ProgressView("Loading queue…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if player.queue.isEmpty {
                 ContentUnavailableView(
-                    "La cola está vacía",
+                    "The queue is empty",
                     systemImage: "text.line.first.and.arrowtriangle.forward",
-                    description: Text("Añade canciones con “Reproducir siguiente”."))
+                    description: Text("Add songs with “Play next”."))
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -35,7 +35,7 @@ struct QueueView: View {
         .frame(width: 420, height: 440)
         .safeAreaInset(edge: .top) {
             HStack {
-                Text("Cola")
+                Text("Queue")
                     .font(.headline)
                 Spacer()
                 Button {
@@ -44,7 +44,7 @@ struct QueueView: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.plain)
-                .help("Actualizar cola")
+                .help("Refresh queue")
             }
             .padding(12)
             .background(.bar)

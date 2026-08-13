@@ -112,9 +112,9 @@ struct PlaybackProgressState {
         guard pendingSeek.trackID == trackID else { return false }
         let pendingAge = date.timeIntervalSince(pendingSeek.createdAt)
         guard pendingAge < 3 else { return false }
-        // Comparar contra la posición interpolada, no contra el target original:
-        // si Spotify ya aplicó el seek, el remoto avanza con el tiempo y se alejaría
-        // del target aunque la confirmación sea correcta.
+        // Compare against the interpolated position, not the original target:
+        // if Spotify already applied the seek, the remote advances with time
+        // and would drift away from the target even when confirmation is correct.
         let delta = abs(remoteProgressMs - progress(at: date))
         return delta > 1_500
     }
@@ -272,7 +272,7 @@ final class PlayerStore {
         await run { try await SpotifyClient.shared.command("PUT", "me/player", body: ["device_ids": [id]]) }
     }
 
-    /// Reproduce un contexto (playlist/álbum) empezando en un track, o tracks sueltos.
+    /// Play a context (playlist/album) starting at a track, or loose tracks.
     func play(contextURI: String? = nil, trackURI: String? = nil) async {
         var body: [String: Any] = [:]
         if let contextURI {
@@ -293,7 +293,7 @@ final class PlayerStore {
             try await operation()
             lastError = nil
             if refreshAfter {
-                // El estado tarda un poco en propagarse en el backend de Spotify.
+                // State takes a moment to propagate on Spotify's backend.
                 try? await Task.sleep(for: .milliseconds(400))
                 await refresh()
             }
@@ -306,14 +306,14 @@ final class PlayerStore {
         if let apiError = error as? SpotifyAPIError,
            case .http(let status, _) = apiError {
             switch status {
-            case 401: return "Tu sesión de Spotify caducó. Cierra sesión y vuelve a entrar."
-            case 403: return "Spotify rechazó el control. Comprueba que tu cuenta sea Premium y que haya un dispositivo activo."
-            case 404: return "No hay ningún dispositivo Spotify activo. Abre Spotify en un dispositivo e inténtalo de nuevo."
+            case 401: return "Your Spotify session expired. Log out and sign in again."
+            case 403: return "Spotify rejected playback control. Check that your account is Premium and that a device is active."
+            case 404: return "No active Spotify device. Open Spotify on a device and try again."
             default: break
             }
         }
         if (error as? URLError) != nil {
-            return "Sin conexión con Spotify. Comprueba tu conexión a internet."
+            return "No connection to Spotify. Check your internet connection."
         }
         return error.localizedDescription
     }

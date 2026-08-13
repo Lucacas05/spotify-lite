@@ -1,14 +1,14 @@
 import SwiftUI
 
 enum TrackListSource: Equatable {
-    /// La primera página llega en GET /playlists/{id}; las siguientes se
-    /// recuperan desde /playlists/{id}/items usando su offset.
+    /// First page comes from GET /playlists/{id}; later pages are
+    /// fetched from /playlists/{id}/items using their offset.
     case playlist(id: String)
-    /// GET /me/tracks, paginado con limit máximo 50.
+    /// GET /me/tracks, paginated with a maximum limit of 50.
     case likedSongs
 }
 
-/// Lista de tracks compartida por playlists y Liked Songs.
+/// Track list shared by playlists and Liked Songs.
 struct TrackListView: View {
     let title: String
     let source: TrackListSource
@@ -28,10 +28,10 @@ struct TrackListView: View {
     var body: some View {
         Group {
             if let error {
-                ContentUnavailableView("No se pudo cargar", systemImage: "exclamationmark.triangle",
+                ContentUnavailableView("Could not load", systemImage: "exclamationmark.triangle",
                                        description: Text(error))
             } else if tracks.isEmpty && !loading {
-                ContentUnavailableView("Sin canciones", systemImage: "music.note")
+                ContentUnavailableView("No songs", systemImage: "music.note")
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -40,8 +40,8 @@ struct TrackListView: View {
                                 Task { await player.play(contextURI: contextURI, trackURI: track.uri) }
                             }
                             .onAppear {
-                                // Respaldo para conexiones lentas o una precarga
-                                // interrumpida: pedir la página antes de tocar fondo.
+                                // Fallback for slow connections or an interrupted
+                                // preload: request the next page before hitting the bottom.
                                 if index >= tracks.count - 30 {
                                     Task { await loadMore() }
                                 }
@@ -50,14 +50,14 @@ struct TrackListView: View {
                         }
                         if loading { ProgressView().padding() }
                     }
-                    // Deja la última fila completamente por encima de la barra
-                    // del reproductor, que vive fuera de este ScrollView.
+                    // Keep the last row fully above the player bar,
+                    // which lives outside this ScrollView.
                     .padding(.bottom, 72)
                 }
             }
         }
         .navigationTitle(title)
-        .navigationSubtitle(total > 0 ? "\(total) canciones" : "")
+        .navigationSubtitle(total > 0 ? "\(total) songs" : "")
         .task(id: source) {
             tracks = []
             total = 0
@@ -77,8 +77,8 @@ struct TrackListView: View {
             case .playlist(let id):
                 guard loadedItemCount < total || total == 0 else { return }
 
-                // El detalle contiene la primera página (100 elementos en la
-                // API actual). Las páginas siguientes viven en /items.
+                // The detail contains the first page (100 items in the
+                // current API). Later pages live under /items.
                 let page: Paging<PlaylistEntry>
                 if loadedItemCount == 0 {
                     let response: PlaylistDetailResponse = try await SpotifyClient.shared.get(
@@ -105,8 +105,8 @@ struct TrackListView: View {
         }
     }
 
-    /// Muestra la primera página cuanto antes y completa el resto en segundo
-    /// plano, cediendo ejecución a SwiftUI entre requests.
+    /// Show the first page as soon as possible and finish the rest in the
+    /// background, yielding to SwiftUI between requests.
     private func preloadRemainingPlaylistItems() async {
         guard case .playlist = source else { return }
 
@@ -134,7 +134,7 @@ struct TrackRow: View {
                     artwork
                 }
                 .buttonStyle(.plain)
-                .help("Ver álbum \(album.name)")
+                .help("View album \(album.name)")
             } else {
                 artwork
             }
@@ -152,7 +152,7 @@ struct TrackRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .help("Ver artista \(artist.name)")
+                    .help("View artist \(artist.name)")
                 } else {
                     Text(track.artistNames)
                         .font(.caption)
@@ -168,7 +168,7 @@ struct TrackRow: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .help("Reproducir siguiente")
+            .help("Play next")
             Text(track.durationFormatted)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -179,8 +179,8 @@ struct TrackRow: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { onPlay() }
         .contextMenu {
-            Button("Reproducir") { onPlay() }
-            Button("Reproducir siguiente") { Task { await player.playNext(track) } }
+            Button("Play") { onPlay() }
+            Button("Play next") { Task { await player.playNext(track) } }
         }
     }
 
