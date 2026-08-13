@@ -17,15 +17,56 @@ final class LibrespotProcessLifetimeTests: XCTestCase {
         )
     }
 
-    func testWrapperKillsChildWhenStdinClosesAndWhenChildExits() {
-        let script = LibrespotProcessLifetime.wrapperScript
+    func testWrapperScriptDoesNotTouchCredentials() {
+        XCTAssertFalse(LibrespotProcessLifetime.wrapperScript.contains("credentials.json"))
+    }
 
-        XCTAssertTrue(script.contains("trap cleanup EXIT TERM INT HUP"))
-        XCTAssertTrue(script.contains("cat >/dev/null"))
-        XCTAssertTrue(script.contains("kill -0 \"$child\""))
-        XCTAssertTrue(script.contains("kill -0 \"$reader\""))
-        XCTAssertTrue(script.contains("exit \"$status\""))
-        XCTAssertFalse(script.contains("credentials.json"))
+    private func launchWrapper(childArgs: [String]) throws -> (process: Process, stdin: FileHandle) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: LibrespotProcessLifetime.bashPath)
+        process.arguments = LibrespotProcessLifetime.wrapperArguments(
+            binaryPath: "/bin/sleep", librespotArguments: childArgs)
+        let pipe = Pipe()
+        process.standardInput = pipe
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        return (process, pipe.fileHandleForWriting)
+    }
+
+    /// Backgrounded jobs in a non-interactive shell get stdin from /dev/null;
+    /// a wrapper whose reader misses the real stdin kills the child instantly.
+    func testWrapperKeepsChildAliveWhileParentHoldsStdin() throws {
+        let (process, stdin) = try launchWrapper(childArgs: ["60"])
+        defer { process.terminate(); try? stdin.close() }
+
+        Thread.sleep(forTimeInterval: 2.0)
+        XCTAssertTrue(process.isRunning, "wrapper (and child) must survive while stdin is open")
+    }
+
+    func testWrapperKillsChildWhenStdinCloses() throws {
+        let (process, stdin) = try launchWrapper(childArgs: ["60"])
+        defer { process.terminate() }
+
+        try stdin.close()
+        let deadline = Date().addingTimeInterval(5)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertFalse(process.isRunning, "wrapper must exit soon after stdin closes")
+        XCTAssertEqual(process.terminationStatus, 0)
+    }
+
+    func testWrapperExitsWhenChildExits() throws {
+        let (process, stdin) = try launchWrapper(childArgs: ["0.2"])
+        defer { try? stdin.close() }
+
+        let deadline = Date().addingTimeInterval(5)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertFalse(process.isRunning, "wrapper must exit when the child exits on its own")
+        XCTAssertEqual(process.terminationStatus, 0)
     }
 
     func testPgrepPatternMatchesNameAndEscapesCachePath() {

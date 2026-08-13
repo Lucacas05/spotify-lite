@@ -17,12 +17,17 @@ enum LibrespotProcessLifetime {
     /// child and the stdin reader. Parent death closes the pipe → `cat` exits
     /// → librespot is killed. librespot death makes bash exit so the engine's
     /// termination handler still fires.
+    ///
+    /// In a non-interactive shell, backgrounded jobs get stdin redirected to
+    /// /dev/null, so the reader must inherit the real stdin via fd 3 — plain
+    /// `cat &` sees instant EOF and the wrapper kills librespot at ~0.25s.
     static let wrapperScript = """
         cleanup() { kill "$child" "$reader" 2>/dev/null || true; wait "$child" 2>/dev/null || true; }
         trap cleanup EXIT TERM INT HUP
+        exec 3<&0
         "$0" "$@" &
         child=$!
-        cat >/dev/null &
+        cat <&3 >/dev/null &
         reader=$!
         while kill -0 "$child" 2>/dev/null && kill -0 "$reader" 2>/dev/null; do
           sleep 0.25
