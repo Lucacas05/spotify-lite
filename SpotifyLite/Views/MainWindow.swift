@@ -15,7 +15,7 @@ struct MainWindow: View {
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(library: library, selection: $selection)
+            SidebarView(library: library, player: player, selection: $selection)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220)
         } detail: {
             NavigationStack {
@@ -58,7 +58,12 @@ struct MainWindow: View {
         case .likedSongs:
             TrackListView(title: "Liked Songs", source: .likedSongs, player: player)
         case .playlist(let playlist):
-            TrackListView(title: playlist.name, source: .playlist(id: playlist.id), player: player)
+            TrackListView(
+                title: playlist.name,
+                source: .playlist(id: playlist.id),
+                player: player,
+                artworkURL: playlistArtworkURL(playlist)
+            )
         }
     }
 
@@ -123,6 +128,12 @@ struct MainWindow: View {
             return true
         }
         return rendered
+    }
+
+    private func playlistArtworkURL(_ playlist: SimplifiedPlaylist) -> URL? {
+        playlist.images?
+            .max(by: { ($0.width ?? 0) < ($1.width ?? 0) })
+            .flatMap { URL(string: $0.url) }
     }
 
     private var colorScheme: ColorScheme? {

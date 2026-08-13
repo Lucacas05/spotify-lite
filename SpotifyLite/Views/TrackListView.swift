@@ -13,6 +13,7 @@ struct TrackListView: View {
     let title: String
     let source: TrackListSource
     var player: PlayerStore
+    var artworkURL: URL? = nil
 
     @State private var tracks: [Track] = []
     @State private var total = 0
@@ -25,16 +26,31 @@ struct TrackListView: View {
         return nil
     }
 
+    private var header: some View {
+        TrackListHeader(
+            title: title,
+            source: source,
+            artworkURL: artworkURL ?? tracks.first?.artworkURL,
+            total: total,
+            tracks: tracks,
+            player: player
+        )
+    }
+
     var body: some View {
         Group {
             if let error {
                 ContentUnavailableView("Could not load", systemImage: "exclamationmark.triangle",
                                        description: Text(error))
             } else if tracks.isEmpty && !loading {
-                ContentUnavailableView("No songs", systemImage: "music.note")
+                VStack(spacing: 0) {
+                    header
+                    ContentUnavailableView("No songs", systemImage: "music.note")
+                }
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
+                        header
                         ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
                             TrackRow(track: track, player: player) {
                                 Task { await player.play(contextURI: contextURI, trackURI: track.uri) }
@@ -119,11 +135,117 @@ struct TrackListView: View {
     }
 }
 
+private struct TrackListHeader: View {
+    let title: String
+    let source: TrackListSource
+    var artworkURL: URL?
+    var total: Int
+    var tracks: [Track]
+    var player: PlayerStore
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 20) {
+            headerArtwork
+            VStack(alignment: .leading, spacing: 8) {
+                Text(source == .likedSongs ? "LIBRARY" : "PLAYLIST")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(title)
+                    .font(.largeTitle.bold())
+                    .lineLimit(2)
+                if total > 0 {
+                    Text("\(total) songs")
+                        .foregroundStyle(.secondary)
+                }
+                HStack(spacing: 10) {
+                    Button {
+                        Task { await playFromStart(shuffled: false) }
+                    } label: {
+                        Label(isPlayingThis ? "Pause" : "Play",
+                              systemImage: isPlayingThis ? "pause.fill" : "play.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    .help(isPlayingThis ? "Pause" : "Play")
+                    .disabled(!canPlay)
+
+                    Button {
+                        Task { await playFromStart(shuffled: true) }
+                    } label: {
+                        Label("Shuffle", systemImage: "shuffle")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Shuffle play")
+                    .disabled(!canPlay)
+                }
+                .padding(.top, 4)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 16)
+    }
+
+    @ViewBuilder
+    private var headerArtwork: some View {
+        if let artworkURL {
+            AsyncImage(url: artworkURL) { image in
+                image.resizable().scaledToFill()
+            } placeholder: {
+                Color.secondary.opacity(0.2)
+            }
+            .frame(width: 140, height: 140)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(source == .likedSongs ? Color.pink.opacity(0.85) : Color.secondary.opacity(0.2))
+                    .frame(width: 140, height: 140)
+                Image(systemName: source == .likedSongs ? "heart.fill" : "music.note.list")
+                    .font(.system(size: 44))
+                    .foregroundStyle(source == .likedSongs ? .white : .secondary)
+            }
+        }
+    }
+
+    private var canPlay: Bool {
+        contextURI != nil || !tracks.isEmpty
+    }
+
+    private var contextURI: String? {
+        if case .playlist(let id) = source { return "spotify:playlist:\(id)" }
+        return nil
+    }
+
+    private var isPlayingThis: Bool {
+        guard let contextURI else { return false }
+        return (player.state?.context?.uri == contextURI) && (player.state?.isPlaying ?? false)
+    }
+
+    private func playFromStart(shuffled: Bool) async {
+        if isPlayingThis && !shuffled {
+            await player.togglePlayPause()
+            return
+        }
+        if shuffled { await player.setShuffle(true) }
+        if let contextURI {
+            await player.play(contextURI: contextURI)
+        } else {
+            await player.play(uris: tracks.prefix(50).map(\.uri))
+        }
+    }
+}
+
 struct TrackRow: View {
     let track: Track
     var player: PlayerStore
     var showAlbumLink = true
     let onPlay: () -> Void
+
+    private var isCurrent: Bool {
+        player.state?.isCurrentTrack(track) ?? false
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -141,6 +263,8 @@ struct TrackRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.name)
+                    .foregroundStyle(isCurrent ? Color.green : Color.primary)
+                    .fontWeight(isCurrent ? .semibold : .regular)
                     .lineLimit(1)
                 if let artist = track.artists.first, let artistID = artist.id {
                     NavigationLink {
@@ -176,7 +300,15 @@ struct TrackRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        .background {
+            if isCurrent {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.green.opacity(0.12))
+            }
+        }
         .contentShape(Rectangle())
+        .accessibilityAddTraits(isCurrent ? .isSelected : [])
+        .accessibilityValue(isCurrent ? "Now playing" : "")
         .onTapGesture(count: 2) { onPlay() }
         .contextMenu {
             Button("Play") { onPlay() }

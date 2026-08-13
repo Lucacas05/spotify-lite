@@ -8,7 +8,12 @@ targets:
   SpotifyLite:
     type: application
     platform: macOS
-    sources: [SpotifyLite]
+    sources:
+      - path: SpotifyLite
+        excludes:
+          - "**/*.html"
+          - "Views/Prototype"
+          - "Views/Prototype/**"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lucas.spotifylite

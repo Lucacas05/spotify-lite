@@ -151,6 +151,10 @@ final class PlayerStore {
         state?.item?.id ?? state?.item?.uri
     }
 
+    var isShuffling: Bool {
+        state?.shuffleState ?? false
+    }
+
     func startPolling() {
         guard pollTask == nil else { return }
         pollTask = Task {
@@ -222,6 +226,17 @@ final class PlayerStore {
 
     func previous() async {
         await run { try await SpotifyClient.shared.command("POST", "me/player/previous") }
+    }
+
+    func setShuffle(_ enabled: Bool) async {
+        await run {
+            try await SpotifyClient.shared.command(
+                "PUT", "me/player/shuffle", query: ["state": enabled ? "true" : "false"])
+        }
+    }
+
+    func toggleShuffle() async {
+        await setShuffle(!isShuffling)
     }
 
     func seek(to positionMs: Int, expectedTrackID: String? = nil) async {
@@ -322,11 +337,13 @@ final class PlayerStore {
     }
 
     /// Play a context (playlist/album) starting at a track, or loose tracks.
-    func play(contextURI: String? = nil, trackURI: String? = nil) async {
+    func play(contextURI: String? = nil, trackURI: String? = nil, uris: [String]? = nil) async {
         var body: [String: Any] = [:]
         if let contextURI {
             body["context_uri"] = contextURI
             if let trackURI { body["offset"] = ["uri": trackURI] }
+        } else if let uris, !uris.isEmpty {
+            body["uris"] = Array(uris.prefix(50))
         } else if let trackURI {
             body["uris"] = [trackURI]
         }

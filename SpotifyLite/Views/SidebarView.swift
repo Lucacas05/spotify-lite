@@ -33,6 +33,7 @@ final class LibraryStore {
 
 struct SidebarView: View {
     var library: LibraryStore
+    var player: PlayerStore
     @Binding var selection: SidebarItem?
 
     var body: some View {
@@ -40,16 +41,37 @@ struct SidebarView: View {
             Section {
                 Label("Search", systemImage: "magnifyingglass")
                     .tag(SidebarItem.search)
-                Label("Liked Songs", systemImage: "heart.fill")
-                    .tag(SidebarItem.likedSongs)
+                sidebarLabel(
+                    title: "Liked Songs",
+                    icon: "heart.fill",
+                    isCurrent: player.state?.isPlayingLikedSongs ?? false
+                )
+                .tag(SidebarItem.likedSongs)
             }
             Section("Playlists") {
                 ForEach(library.playlists) { playlist in
-                    Label(playlist.name, systemImage: "music.note.list")
-                        .tag(SidebarItem.playlist(playlist))
+                    sidebarLabel(
+                        title: playlist.name,
+                        icon: "music.note.list",
+                        isCurrent: player.state?.isPlayingPlaylist(id: playlist.id) ?? false
+                    )
+                    .tag(SidebarItem.playlist(playlist))
                 }
             }
         }
         .task { await library.loadPlaylists() }
+    }
+
+    private func sidebarLabel(title: String, icon: String, isCurrent: Bool) -> some View {
+        Label {
+            Text(title)
+                .lineLimit(1)
+        } icon: {
+            Image(systemName: isCurrent
+                  ? ((player.state?.isPlaying ?? false) ? "speaker.wave.2.fill" : "speaker.fill")
+                  : icon)
+        }
+        .foregroundStyle(isCurrent ? Color.green : Color.primary)
+        .help(isCurrent ? "Now playing from \(title)" : title)
     }
 }

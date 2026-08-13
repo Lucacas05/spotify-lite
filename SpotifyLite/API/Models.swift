@@ -87,11 +87,35 @@ struct DevicesResponse: Decodable {
     let devices: [Device]
 }
 
+struct PlaybackContext: Decodable {
+    let uri: String?
+    let type: String?
+}
+
 struct PlaybackState: Decodable {
     let device: Device?
     let isPlaying: Bool
     let progressMs: Int?
     let item: Track?
+    let shuffleState: Bool?
+    let context: PlaybackContext?
+
+    func isPlayingPlaylist(id: String) -> Bool {
+        context?.uri == "spotify:playlist:\(id)"
+    }
+
+    /// Liked Songs uses `spotify:user:{id}:collection`, not a playlist URI.
+    var isPlayingLikedSongs: Bool {
+        guard let uri = context?.uri else { return context?.type == "collection" }
+        return uri.hasSuffix(":collection") && !uri.contains(":collection:")
+    }
+
+    func isCurrentTrack(_ track: Track) -> Bool {
+        if let currentID = item?.id, let trackID = track.id {
+            return currentID == trackID
+        }
+        return item?.uri == track.uri
+    }
 }
 
 struct SearchResponse: Decodable {

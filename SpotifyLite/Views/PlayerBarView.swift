@@ -3,200 +3,327 @@ import SwiftUI
 struct PlayerBarView: View {
     var player: PlayerStore
     @State private var volume: Double = 50
-    @State private var showingQueue = false
-    @State private var isScrubbing = false
-    @State private var scrubProgressMs = 0.0
-    @State private var scrubbingTrackID: String?
 
     var body: some View {
-        HStack(spacing: 16) {
-            // Current track
-            HStack(spacing: 10) {
-                AsyncImage(url: player.state?.item?.artworkURL) { image in
-                    image.resizable()
-                } placeholder: {
-                    Color.secondary.opacity(0.2)
-                }
-                .frame(width: 44, height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+        VStack(spacing: 0) {
+            PlaybackScrubber(player: player)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
 
-                VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .center, spacing: 14) {
+                playableArtwork
+
+                VStack(alignment: .leading, spacing: 4) {
                     Text(player.state?.item?.name ?? "Nothing playing")
+                        .font(.system(size: 14, weight: .semibold))
                         .lineLimit(1)
                     Text(player.state?.item?.artistNames ?? "")
-                        .font(.caption)
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    transportControls
+                }
+                .frame(minWidth: 160, maxWidth: 360, alignment: .leading)
+
+                Spacer(minLength: 12)
+
+                HStack(alignment: .center, spacing: 16) {
+                    PlayerQueueButton(player: player)
+                    PlayerVolumeSlider(player: player, volume: $volume)
+                    PlayerDeviceMenu(player: player)
                 }
             }
-            .frame(minWidth: 180, idealWidth: 220, maxWidth: 260, alignment: .leading)
-            .layoutPriority(2)
-
-            Spacer()
-
-            VStack(spacing: 6) {
-                // Controls
-                HStack(spacing: 20) {
-                    Button { Task { await player.previous() } } label: {
-                        Image(systemName: "backward.fill")
-                    }
-                    Button { Task { await player.togglePlayPause() } } label: {
-                        Image(systemName: (player.state?.isPlaying ?? false) ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 32))
-                    }
-                    Button { Task { await player.next() } } label: {
-                        Image(systemName: "forward.fill")
-                    }
-                }
-                .buttonStyle(.plain)
-
-                TimelineView(.periodic(from: .now, by: 0.2)) { context in
-                    progressSlider(at: context.date)
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .frame(minWidth: 180, maxWidth: 420)
-            .frame(maxWidth: .infinity)
-            .layoutPriority(1)
-
-            Spacer()
-
-            // Volume + device
-            HStack(spacing: 12) {
-                Button {
-                    showingQueue.toggle()
-                } label: {
-                    Image(systemName: "text.line.first.and.arrowtriangle.forward")
-                }
-                .buttonStyle(.plain)
-                .help("Playback queue")
-                .popover(isPresented: $showingQueue, arrowEdge: .bottom) {
-                    QueueView(player: player)
-                }
-
-                Image(systemName: "speaker.wave.2.fill")
-                    .foregroundStyle(.secondary)
-                Slider(value: $volume, in: 0...100) { editing in
-                    if !editing { Task { await player.setVolume(Int(volume)) } }
-                }
-                .frame(width: 100)
-
-                Menu {
-                    Button {
-                        Task { await player.playOnThisMac() }
-                    } label: {
-                        HStack {
-                            Text(player.localEngine.status == .starting
-                                 ? "Starting local player…" : "Play on this Mac")
-                            if player.localEngine.isRunning { Image(systemName: "checkmark") }
-                        }
-                    }
-                    .disabled(player.localEngine.status == .starting)
-                    if player.localEngine.isRunning {
-                        Button("Stop local player") { player.stopLocalPlayback() }
-                    }
-                    Divider()
-                    if player.devices.isEmpty {
-                        Text("No active devices")
-                    }
-                    ForEach(player.devices) { device in
-                        Button {
-                            Task { await player.transferPlayback(to: device) }
-                        } label: {
-                            HStack {
-                                Text(device.name)
-                                if device.isActive { Image(systemName: "checkmark") }
-                            }
-                        }
-                    }
-                    Divider()
-                    Button("Refresh devices") { Task { await player.loadDevices() } }
-                } label: {
-                    Image(systemName: "hifispeaker")
-                }
-                .menuStyle(.borderlessButton)
-                .frame(width: 40)
-                .onTapGesture { Task { await player.loadDevices() } }
-            }
-            .frame(maxWidth: 250, alignment: .trailing)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
+            .padding(.top, 8)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
         .background(.bar)
         .onChange(of: player.state?.device?.volumePercent) { _, newValue in
             if let newValue { volume = Double(newValue) }
         }
-        .onChange(of: player.currentTrackIdentifier) { _, _ in
-            guard isScrubbing else { return }
-            // If Spotify changed tracks while dragging, cancel the local scrub.
-            isScrubbing = false
-            scrubbingTrackID = nil
-        }
         .task { await player.loadDevices() }
     }
 
-    private func progressSlider(at date: Date) -> some View {
-        let durationMs = max(player.state?.item?.durationMs ?? 0, 0)
-        let sliderUpperBound = Double(max(durationMs, 1))
-        let liveProgressMs = player.progress(at: date)
-        let displayedProgressMs = min(
-            max(Int((isScrubbing ? scrubProgressMs : Double(liveProgressMs)).rounded()), 0),
-            durationMs
-        )
+    private var playableArtwork: some View {
+        ZStack {
+            PlayerArtwork(url: player.state?.item?.artworkURL, size: 56, corner: 8)
+            Button { Task { await player.togglePlayPause() } } label: {
+                Image(systemName: (player.state?.isPlaying ?? false) ? "pause.fill" : "play.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 56, height: 56)
+                    .background(Color.black.opacity(0.35))
+            }
+            .buttonStyle(.plain)
+            .help("Play or pause")
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
 
-        return VStack(spacing: 2) {
-            Slider(
-                value: Binding(
-                    get: { isScrubbing ? scrubProgressMs : Double(liveProgressMs) },
-                    set: { newValue in
-                        beginScrubIfNeeded()
-                        scrubProgressMs = min(max(newValue, 0), Double(durationMs))
-                    }
-                ),
-                in: 0...sliderUpperBound,
-                onEditingChanged: handleScrubEditing
+    private var transportControls: some View {
+        HStack(spacing: 16) {
+            Button { Task { await player.toggleShuffle() } } label: {
+                Label("Shuffle", systemImage: "shuffle")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(player.isShuffling ? Color.green : Color.secondary)
+                    .frame(height: 22)
+            }
+            .buttonStyle(.plain)
+            .help(player.isShuffling ? "Disable shuffle" : "Enable shuffle")
+
+            Button { Task { await player.previous() } } label: {
+                Image(systemName: "backward.end.fill")
+                    .font(.system(size: 11))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Previous")
+
+            Button { Task { await player.next() } } label: {
+                Image(systemName: "forward.end.fill")
+                    .font(.system(size: 11))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Next")
+        }
+        .foregroundStyle(.secondary)
+    }
+}
+
+private struct PlaybackScrubber: View {
+    var player: PlayerStore
+
+    @State private var isScrubbing = false
+    @State private var scrubProgressMs = 0.0
+    @State private var scrubbingTrackID: String?
+    @State private var hovering = false
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.2)) { context in
+            let durationMs = max(player.state?.item?.durationMs ?? 0, 0)
+            let live = player.progress(at: context.date)
+            let displayed = min(
+                max(Int((isScrubbing ? scrubProgressMs : Double(live)).rounded()), 0),
+                durationMs
             )
-            .disabled(durationMs <= 0)
-            .frame(minWidth: 160, maxWidth: .infinity)
-            .help("Playback position")
+            let fraction: CGFloat = durationMs > 0
+                ? CGFloat(displayed) / CGFloat(durationMs)
+                : 0
 
-            HStack {
-                Text(formatTime(milliseconds: displayedProgressMs))
-                Spacer()
-                Text(formatTime(milliseconds: durationMs))
+            VStack(spacing: 4) {
+                bar(fraction: fraction, durationMs: durationMs, live: live)
+                HStack {
+                    timeLabel(displayed)
+                    Spacer()
+                    timeLabel(durationMs)
+                }
             }
-            .font(.caption2)
+        }
+        .onHover { hovering = $0 }
+        .onChange(of: player.currentTrackIdentifier) { _, _ in
+            guard isScrubbing else { return }
+            isScrubbing = false
+            scrubbingTrackID = nil
+        }
+    }
+
+    private func timeLabel(_ ms: Int) -> some View {
+        Text(formatTime(milliseconds: ms))
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
             .foregroundStyle(.secondary)
-            .monospacedDigit()
-        }
     }
 
-    private func beginScrubIfNeeded() {
-        guard !isScrubbing else { return }
-        isScrubbing = true
-        scrubbingTrackID = player.currentTrackIdentifier
-    }
-
-    private func handleScrubEditing(_ isEditing: Bool) {
-        if isEditing {
-            if !isScrubbing {
-                isScrubbing = true
-                scrubbingTrackID = player.currentTrackIdentifier
-                scrubProgressMs = Double(player.progress())
+    private func bar(fraction: CGFloat, durationMs: Int, live: Int) -> some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let filled = max(0, min(width * fraction, width))
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.12))
+                Capsule()
+                    .fill(hovering || isScrubbing ? Color.green : Color.primary.opacity(0.55))
+                    .frame(width: max(filled, 3))
+                if hovering || isScrubbing, durationMs > 0 {
+                    Circle()
+                        .fill(Color.primary)
+                        .frame(width: 10, height: 10)
+                        .offset(x: min(max(filled - 5, 0), width - 10))
+                }
             }
-            return
+            .frame(height: 3)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(dragGesture(width: width, durationMs: durationMs, live: live))
         }
+        .frame(height: 14)
+        .disabled((player.state?.item?.durationMs ?? 0) <= 0)
+        .help("Playback position")
+    }
 
-        isScrubbing = false
-        let targetMs = Int(scrubProgressMs.rounded())
-        let startedTrackID = scrubbingTrackID
-        scrubbingTrackID = nil
-        guard startedTrackID == player.currentTrackIdentifier else { return }
-        Task { await player.seek(to: targetMs, expectedTrackID: startedTrackID) }
+    private func dragGesture(width: CGFloat, durationMs: Int, live: Int) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard durationMs > 0, width > 0 else { return }
+                if !isScrubbing {
+                    isScrubbing = true
+                    scrubbingTrackID = player.currentTrackIdentifier
+                    scrubProgressMs = Double(live)
+                }
+                let x = min(max(value.location.x, 0), width)
+                scrubProgressMs = Double(durationMs) * Double(x / width)
+            }
+            .onEnded { _ in
+                guard isScrubbing else { return }
+                isScrubbing = false
+                let targetMs = Int(scrubProgressMs.rounded())
+                let startedTrackID = scrubbingTrackID
+                scrubbingTrackID = nil
+                guard startedTrackID == player.currentTrackIdentifier else { return }
+                Task { await player.seek(to: targetMs, expectedTrackID: startedTrackID) }
+            }
     }
 
     private func formatTime(milliseconds: Int) -> String {
         let seconds = max(milliseconds, 0) / 1000
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+private struct PlayerQueueButton: View {
+    var player: PlayerStore
+    @State private var showingQueue = false
+
+    var body: some View {
+        Button { showingQueue.toggle() } label: {
+            Image(systemName: "list.bullet")
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Playback queue")
+        .popover(isPresented: $showingQueue, arrowEdge: .bottom) {
+            QueueView(player: player)
+        }
+    }
+}
+
+private struct PlayerVolumeSlider: View {
+    var player: PlayerStore
+    @Binding var volume: Double
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: volumeIcon)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, height: 28)
+            GeometryReader { geo in
+                let filled = geo.size.width * CGFloat(volume / 100)
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.12))
+                    Capsule().fill(Color.primary.opacity(0.5)).frame(width: max(filled, 3))
+                    Circle()
+                        .fill(Color.primary)
+                        .frame(width: 10, height: 10)
+                        .offset(x: min(max(filled - 5, 0), geo.size.width - 10))
+                }
+                .frame(height: 4)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            let x = min(max(value.location.x, 0), geo.size.width)
+                            volume = geo.size.width > 0 ? Double(x / geo.size.width) * 100 : 0
+                        }
+                        .onEnded { _ in
+                            Task { await player.setVolume(Int(volume)) }
+                        }
+                )
+            }
+            .frame(width: 96, height: 28)
+        }
+        .help("Volume")
+    }
+
+    private var volumeIcon: String {
+        if volume < 1 { return "speaker.slash.fill" }
+        if volume < 40 { return "speaker.wave.1.fill" }
+        if volume < 75 { return "speaker.wave.2.fill" }
+        return "speaker.wave.3.fill"
+    }
+}
+
+private struct PlayerDeviceMenu: View {
+    var player: PlayerStore
+
+    var body: some View {
+        Menu {
+            Button {
+                Task { await player.playOnThisMac() }
+            } label: {
+                HStack {
+                    Text(player.localEngine.status == .starting
+                         ? "Starting local player…" : "Play on this Mac")
+                    if player.localEngine.isRunning { Image(systemName: "checkmark") }
+                }
+            }
+            .disabled(player.localEngine.status == .starting)
+            if player.localEngine.isRunning {
+                Button("Stop local player") { player.stopLocalPlayback() }
+            }
+            Divider()
+            if player.devices.isEmpty {
+                Text("No active devices")
+            }
+            ForEach(player.devices) { device in
+                Button {
+                    Task { await player.transferPlayback(to: device) }
+                } label: {
+                    HStack {
+                        Text(device.name)
+                        if device.isActive { Image(systemName: "checkmark") }
+                    }
+                }
+            }
+            Divider()
+            Button("Refresh devices") { Task { await player.loadDevices() } }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "hifispeaker")
+                    .font(.system(size: 12))
+                Text(player.state?.device?.name ?? "Devices")
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(height: 28)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Output device")
+        .onTapGesture { Task { await player.loadDevices() } }
+    }
+}
+
+private struct PlayerArtwork: View {
+    var url: URL?
+    var size: CGFloat
+    var corner: CGFloat = 6
+
+    var body: some View {
+        AsyncImage(url: url) { image in
+            image.resizable().scaledToFill()
+        } placeholder: {
+            Color.secondary.opacity(0.2)
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
     }
 }
