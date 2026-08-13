@@ -5,11 +5,10 @@ Un cliente de Spotify nativo para macOS, hecho con SwiftUI, que use pocos recurs
 ## Requisitos previos
 
 - macOS 14+ (Sonoma) como target. Xcode 16+.
-- Cuenta de Spotify **Premium** (obligatoria para reproducir audio con librespot).
+- Cuenta de Spotify **Premium** solo si se usa el playback local opcional (librespot); el modo control remoto funciona con los endpoints oficiales.
 - App registrada en el [Spotify Developer Dashboard](https://developer.spotify.com/dashboard):
   - Redirect URI: `http://127.0.0.1:8888/callback` (loopback; desde 2025 Spotify solo documenta como seguros `https://` y loopback — los custom schemes dan `INVALID_CLIENT: Insecure redirect URI` en apps nuevas)
   - Anotar el `Client ID` (no se necesita client secret gracias a PKCE).
-- Rust toolchain instalado (solo para compilar librespot en la Fase 3).
 
 ## Decisiones clave
 
@@ -18,11 +17,11 @@ Un cliente de Spotify nativo para macOS, hecho con SwiftUI, que use pocos recurs
 | UI | SwiftUI puro | Nativo, ligero, sin Electron/Qt |
 | Auth | OAuth 2.0 Authorization Code + PKCE con navegador + servidor loopback local | Login en la página oficial de Spotify; loopback (`http://127.0.0.1`) es la única forma documentada como segura para desktop desde 2025, sin client secret |
 | Metadata / playlists / búsqueda | Spotify Web API con `URLSession` + `Codable` | Sin dependencias externas |
-| Playback | librespot (binario embebido, proceso hijo) controlado vía Spotify Connect | Único camino viable: Spotify no ofrece SDK de playback para desktop |
+| Playback | Control remoto vía Web API por defecto; librespot **externo** (instalado por el usuario con brew), opt-in y experimental | Spotify no ofrece SDK de playback para desktop; no embeber librespot mantiene lo publicado 100% API oficial |
 | Tokens | Keychain | Nunca en UserDefaults ni en disco plano |
 | Dependencias | Cero paquetes de terceros en Swift | Menos superficie, menos peso |
 
-**Nota legal:** usar librespot va contra los términos de servicio de Spotify (como todos los clientes no oficiales: Psst, ncspot, etc.). En la práctica se tolera, pero existe riesgo teórico de baneo de cuenta. La app en modo "solo control remoto" (Fases 1–2) es 100% conforme a la API oficial.
+**Nota legal:** la app publicada usa solo la API oficial (control remoto). Usar librespot va contra los términos de servicio de Spotify (como todos los clientes no oficiales: Psst, ncspot, etc.); en la práctica se tolera, pero existe riesgo teórico de baneo de cuenta. Por eso el playback local es opt-in, requiere que el usuario instale librespot por su cuenta y se marca como experimental/no oficial.
 
 ## Arquitectura
 
@@ -45,13 +44,13 @@ Un cliente de Spotify nativo para macOS, hecho con SwiftUI, que use pocos recurs
 └───────────────┘         │ player endpoints
                   ┌───────┴───────────────────┐
                   │     PlayerEngine           │
-                  │  librespot como proceso    │
-                  │  hijo (device "SpotifyLite")│
+                  │  librespot externo (brew)  │
+                  │  opcional, proceso hijo    │
                   │  + MPNowPlayingInfoCenter  │
                   └───────────────────────────┘
 ```
 
-Cómo suena la música: librespot corre como proceso hijo y se registra como dispositivo Spotify Connect llamado "SpotifyLite". La app lo selecciona como dispositivo activo vía Web API (`PUT /me/player`) y controla todo (play, pause, seek, cola) con los endpoints `player`. El audio sale por librespot directo a CoreAudio.
+Cómo suena la música: por defecto, la app controla la reproducción en cualquier dispositivo Spotify Connect activo vía Web API. Si el usuario activa el modo experimental y tiene librespot instalado (brew), la app lo lanza como proceso hijo registrado como dispositivo Connect "SpotifyLite", lo selecciona vía `PUT /me/player` y controla todo (play, pause, seek, cola) con los endpoints `player`. El audio sale por librespot directo a CoreAudio.
 
 ## Estructura del proyecto
 
@@ -67,8 +66,9 @@ SpotifyLite/
 │   ├── Endpoints.swift           # rutas tipadas de la Web API
 │   └── Models/                   # Codable: Track, Album, Playlist, Device...
 ├── Player/
-│   ├── LibrespotProcess.swift    # lanzar/supervisar el binario librespot
-│   ├── PlayerEngine.swift        # estado de reproducción, polling/eventos
+│   ├── LibrespotLocator.swift    # detectar instalación vía brew, validar versión
+│   ├── LibrespotProcess.swift    # lanzar/supervisar el binario externo
+│   ├── PlayerEngine.swift        # estado de reproducción (polling Web API)
 │   └── NowPlayingBridge.swift    # MPNowPlayingInfoCenter, media keys
 ├── Views/
 │   ├── MainWindow.swift          # NavigationSplitView (sidebar + detalle)
@@ -77,8 +77,6 @@ SpotifyLite/
 │   ├── PlaylistDetailView.swift
 │   ├── SearchView.swift
 │   └── PlayerBarView.swift       # barra inferior: track, controles, volumen
-├── Resources/
-│   └── librespot                 # binario compilado (universal arm64+x86_64)
 └── plan.md                       # este archivo
 ```
 
@@ -87,8 +85,7 @@ SpotifyLite/
 ### Fase 0 — Setup del proyecto (½ día)
 
 - [ ] Crear proyecto Xcode: app macOS, SwiftUI, bundle id `com.lucas.spotifylite`.
-- [ ] Registrar URL scheme `spotifylite` en Info → URL Types.
-- [ ] App Sandbox: habilitar `com.apple.security.network.client` (outgoing connections).
+- [ ] Sin App Sandbox (necesario para lanzar el librespot externo del usuario); Hardened Runtime activado. Distribución: Developer ID + notarización, fuera del App Store.
 - [ ] Registrar la app en el Spotify Developer Dashboard y guardar el Client ID.
 
 ### Fase 1 — Login con OAuth de Spotify (1–2 días)
@@ -123,28 +120,42 @@ Con solo la Web API la app ya es útil: navega tu música y controla la reproduc
 
 **Criterio de salida:** buscar una canción, sonarla en el dispositivo activo, controlar play/pausa/volumen desde la app.
 
-### Fase 3 — Playback propio con librespot (3–5 días)
+### Fase 3 — Pulido, rendimiento y primer release (2–3 días)
 
-- [ ] Compilar librespot en release: binario universal (arm64 + x86_64), features mínimas (`--no-default-features --features "rodio-backend"`), strip. Debe quedar en ~10 MB.
-- [ ] Embeberlo en `Resources/` y firmarlo junto con la app.
-- [ ] `LibrespotProcess`: lanzar con `Process` al iniciar sesión:
-  - `librespot --name "SpotifyLite" --backend rodio --cache <app support> --enable-oauth` (librespot soporta OAuth con scope `streaming`; evaluar reusar el token de la app o dejar que haga su propio flujo una sola vez).
-  - Supervisión: reiniciar si el proceso muere, log a archivo en Application Support.
-- [ ] Al arrancar, transferir la reproducción al dispositivo "SpotifyLite" (`PUT /me/player` con su device id).
-- [ ] `NowPlayingBridge`: `MPNowPlayingInfoCenter` (título, artista, carátula, posición) + `MPRemoteCommandCenter` (media keys del teclado, AirPods).
-- [ ] Latencia de estado: reducir dependencia del polling usando eventos de librespot (`--onevent` o su API de eventos) para reflejar cambios al instante.
-
-**Criterio de salida:** la app reproduce audio por sí misma, responde a las media keys y aparece en el widget Now Playing de macOS.
-
-### Fase 4 — Pulido y rendimiento (2–3 días)
+El primer release es solo-control-remoto: 100% API oficial, sin librespot.
 
 - [ ] Cola de reproducción y "reproducir siguiente".
 - [ ] Vista de álbum y de artista.
 - [ ] Atajos de teclado (espacio = play/pausa, ⌘F = buscar, ⌘1/2 = navegación).
 - [ ] Ícono en menu bar opcional (track actual + controles) con `MenuBarExtra`.
-- [ ] Perfilar con Instruments: objetivo < 50 MB RAM con librespot incluido, 0% CPU en reposo (sin timers activos en background).
+- [ ] Perfilar con Instruments: objetivo < 50 MB RAM, 0% CPU en reposo (sin timers activos en background).
 - [ ] Modo claro/oscuro, estados vacíos, manejo de errores visibles (sin conexión, token revocado, sin Premium).
-- [ ] Empaquetado: firma, notarización, DMG.
+- [ ] Empaquetado: firma Developer ID, hardened runtime, notarización, DMG. El brew cask viene después, apuntando al mismo artefacto notarizado.
+
+**Criterio de salida:** DMG notarizado, descargable e instalable, con la app completa en modo control remoto.
+
+### Fase 4 — Playback local con librespot externo (2–3 días, post-release)
+
+Opt-in y experimental: el usuario instala librespot por su cuenta (brew); la app nunca lo embebe.
+
+- [ ] `LibrespotLocator`: detectar la instalación sin depender del PATH de shell — buscar `brew` (fallback `/opt/homebrew/bin/brew`, `/usr/local/bin/brew`), resolver `brew --prefix librespot`, verificar que `<prefix>/bin/librespot` existe y es ejecutable.
+- [ ] Validar versión con `librespot --version`: bloquear si < 0.8.0 (mensaje "actualiza con `brew upgrade librespot`"); solo advertir si es mayor o no parseable.
+- [ ] Opt-in en Ajustes: toggle "Playback local (experimental)" con advertencia clara (cliente no oficial, riesgo teórico de baneo, requiere Premium).
+- [ ] Descubrimiento: el selector de dispositivos muestra "Esta Mac (configurar…)" cuando el modo no está activo; abre una hoja con instrucciones (`brew install librespot` copiable + botón "Volver a comprobar"). La app no ejecuta brew.
+- [ ] `LibrespotProcess`: lanzar con `Process` el binario externo:
+  - `librespot --name "SpotifyLite" --backend rodio --zeroconf-backend dns-sd --system-cache <Application Support>/SpotifyLite/librespot`.
+  - Auth: reusar el token PKCE de la app (scope `streaming`) vía `LIBRESPOT_ACCESS_TOKEN` en el entorno del proceso; `--enable-oauth` solo como fallback diagnóstico.
+  - Supervisión: si el proceso muere, reiniciar con backoff (3 intentos: 1 s/2 s/4 s); si sigue fallando, degradar a modo control remoto con banner y botón "Reintentar". Log a archivo en Application Support (sin tokens).
+- [ ] Al activarse, transferir la reproducción al dispositivo "SpotifyLite" (`PUT /me/player` con su device id).
+- [ ] Estado de reproducción: reutilizar el polling de la Fase 2 (el bridge de eventos `--onevent` queda como mejora futura).
+- [ ] `NowPlayingBridge`: `MPNowPlayingInfoCenter` (título, artista, carátula, posición) + `MPRemoteCommandCenter` (media keys del teclado, AirPods).
+
+**Criterio de salida:** con librespot instalado y el modo activado, la app reproduce audio por sí misma, responde a las media keys y aparece en el widget Now Playing de macOS; sin librespot, la app sigue completa en modo control remoto.
+
+## Mejoras futuras (sin estimación)
+
+- Bridge de eventos de librespot (`--onevent` + helper embebido que reenvía a la app por socket Unix): reemplaza el polling por eventos instantáneos e interpolación local de posición.
+- Brew cask (tras el primer DMG) y, si hace falta, Sparkle para updates automáticos fuera de brew.
 
 ## Riesgos y mitigaciones
 
@@ -158,7 +169,7 @@ Con solo la Web API la app ya es útil: navega tu música y controla la reproduc
 
 ## Estimación total
 
-~2 a 3 semanas a tiempo parcial para llegar al final de la Fase 3 (app usable con audio propio). La Fase 2 sola ya da una app útil en la primera semana.
+~1.5 a 2 semanas a tiempo parcial hasta el primer release (fin de Fase 3, solo control remoto). La Fase 2 sola ya da una app útil en la primera semana. El playback local con librespot (Fase 4) suma 2–3 días en una versión posterior.
 
 ## Referencias
 
