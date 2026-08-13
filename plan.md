@@ -7,7 +7,7 @@ Un cliente de Spotify nativo para macOS, hecho con SwiftUI, que use pocos recurs
 - macOS 14+ (Sonoma) como target. Xcode 16+.
 - Cuenta de Spotify **Premium** (obligatoria para reproducir audio con librespot).
 - App registrada en el [Spotify Developer Dashboard](https://developer.spotify.com/dashboard):
-  - Redirect URI: `spotifylite://callback`
+  - Redirect URI: `http://127.0.0.1:8888/callback` (loopback; desde 2025 Spotify solo documenta como seguros `https://` y loopback — los custom schemes dan `INVALID_CLIENT: Insecure redirect URI` en apps nuevas)
   - Anotar el `Client ID` (no se necesita client secret gracias a PKCE).
 - Rust toolchain instalado (solo para compilar librespot en la Fase 3).
 
@@ -16,7 +16,7 @@ Un cliente de Spotify nativo para macOS, hecho con SwiftUI, que use pocos recurs
 | Decisión | Elección | Por qué |
 |---|---|---|
 | UI | SwiftUI puro | Nativo, ligero, sin Electron/Qt |
-| Auth | OAuth 2.0 Authorization Code + PKCE con `ASWebAuthenticationSession` | Login en la página oficial de Spotify, seguro para apps de escritorio, sin client secret |
+| Auth | OAuth 2.0 Authorization Code + PKCE con navegador + servidor loopback local | Login en la página oficial de Spotify; loopback (`http://127.0.0.1`) es la única forma documentada como segura para desktop desde 2025, sin client secret |
 | Metadata / playlists / búsqueda | Spotify Web API con `URLSession` + `Codable` | Sin dependencias externas |
 | Playback | librespot (binario embebido, proceso hijo) controlado vía Spotify Connect | Único camino viable: Spotify no ofrece SDK de playback para desktop |
 | Tokens | Keychain | Nunca en UserDefaults ni en disco plano |
@@ -97,10 +97,10 @@ El corazón de lo que pediste: al pulsar "Iniciar sesión", se abre la página o
 
 - [ ] `PKCE.swift`: generar `code_verifier` (64 chars aleatorios) y `code_challenge` (SHA256 + base64url) con CryptoKit.
 - [ ] `AuthManager.login()`:
-  - Construir URL de `https://accounts.spotify.com/authorize` con `client_id`, `response_type=code`, `redirect_uri=spotifylite://callback`, `code_challenge_method=S256`, `code_challenge` y `scope`.
+  - Construir URL de `https://accounts.spotify.com/authorize` con `client_id`, `response_type=code`, `redirect_uri=http://127.0.0.1:<puerto>/callback`, `code_challenge_method=S256`, `code_challenge` y `scope`.
   - Scopes: `user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative user-library-read streaming`.
-  - Abrir con `ASWebAuthenticationSession(url:callbackURLScheme:"spotifylite")` → esto muestra la página oficial de login de Spotify (comparte cookies con Safari: si ya hay sesión, es un clic).
-  - En el callback, extraer `code` de la URL.
+  - Levantar un mini servidor HTTP local efímero en `127.0.0.1` (Network.framework) y abrir la URL en el navegador por defecto con `NSWorkspace.open` (si ya hay sesión de Spotify en el navegador, es un clic).
+  - En el callback HTTP, extraer `code`, responder una página de "vuelve a la app" y apagar el servidor.
 - [ ] `AuthManager.exchangeCode()`: `POST https://accounts.spotify.com/api/token` con `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier`. Respuesta: `access_token` (expira en 1 h) + `refresh_token`.
 - [ ] `KeychainStore`: guardar ambos tokens en el Keychain.
 - [ ] Refresh automático: interceptor en `SpotifyClient` que renueva el token cuando expira (o ante un 401) con `grant_type=refresh_token`, serializado con un actor para evitar refreshes concurrentes.
