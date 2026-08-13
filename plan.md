@@ -153,8 +153,8 @@ Opt-in and experimental: the user installs librespot themselves (brew); the app 
   - Auth: reuse the app's PKCE token (`streaming` scope) via `LIBRESPOT_ACCESS_TOKEN` in the process environment; `--enable-oauth` only as a diagnostic fallback.
   - Supervision: if the process dies, restart with backoff (3 attempts: 1 s/2 s/4 s); if it keeps failing, fall back to remote-control mode with a banner and a "Retry" button. Log to a file in Application Support (no tokens).
 - [ ] On activation, transfer playback to the "SpotifyLite" device (`PUT /me/player` with its device id).
-- [ ] Playback state: reuse Phase 2 polling (the `--onevent` event bridge remains a future improvement).
-- [ ] `NowPlayingBridge`: `MPNowPlayingInfoCenter` (title, artist, artwork, position) + `MPRemoteCommandCenter` (keyboard media keys, AirPods).
+- [x] Playback state: reuse Phase 2 polling (the `--onevent` event bridge remains a future improvement).
+- [x] `NowPlayingBridge`: `MPNowPlayingInfoCenter` (title, artist, artwork, position) + `MPRemoteCommandCenter` (keyboard media keys, AirPods).
 
 **Exit criterion:** with librespot installed and the mode enabled, the app plays audio itself, responds to media keys, and appears in the macOS Now Playing widget; without librespot, the app remains complete in remote-control mode.
 

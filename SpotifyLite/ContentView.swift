@@ -12,7 +12,7 @@ struct ContentView: View {
                     // Closing the window may leave playback in the menu bar,
                     // but logging out must release the local player.
                     if case .signedIn = auth.state { return }
-                    player.stopLocalPlayback()
+                    player.handleSignOut()
                 }
         case .signedOut, .authorizing:
             LoginView(auth: auth)

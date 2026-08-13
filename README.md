@@ -89,6 +89,7 @@ Details:
 - librespot authenticates with the app's own OAuth token (`streaming` scope); there is no second login and no credentials outside your machine.
 - Requires **Premium** (librespot limitation).
 - The child process stops when you quit the app or click **Stop local player**.
+- While SpotifyLite is the active device, the track appears in the macOS Now Playing widget (Control Center / Lock Screen / Touch Bar) with title, artist, album, artwork, and progress. Media keys and AirPods controls play, pause, skip, and go back.
 - Its credential cache lives in `~/Library/Application Support/SpotifyLite/librespot` with owner-only permissions.
 
 **Note:** librespot is an unofficial client and its use is against Spotify's terms of service (same as Psst, ncspot, etc.). In practice it is tolerated, but there is a theoretical risk to the account. That is why it is opt-in and the binary is installed by you, not shipped with the app.
@@ -138,7 +139,7 @@ xcodebuild test -project SpotifyLite.xcodeproj -scheme SpotifyLite \
   -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
 ```
 
-They cover PKCE, tokens, OAuth scopes, Web API payloads, and keyboard navigation.
+They cover PKCE, tokens, OAuth scopes, Web API payloads, keyboard navigation, and Now Playing metadata / media-key dispatch.
 
 ## Keyboard shortcuts
 
@@ -163,7 +164,7 @@ The app is fully usable from the keyboard. Focus lives in one of five zones: Sea
 
 `⌘1` / `⌘2` are intentionally unbound so the number keys have a single meaning.
 
-System media keys (F8 / F9 / F10) still control playback. There are no other global (out-of-app) shortcuts.
+System media keys (previous / play-pause / next; F7–F9 or F8–F10 depending on the Mac and Fn settings) control playback **only while this Mac is the active SpotifyLite device**. They work with the app focused, in the background, and with the window closed. Seeking from Control Center is not supported. Playback on a phone or another Connect device does not take over the Mac’s Now Playing slot. There are no other global (out-of-app) shortcuts.
 
 ### Customize keybinds
 
@@ -182,6 +183,8 @@ If you use an AI coding agent, paste this prompt:
 | HTTP 403 *User not registered* | Add that account under *User Management* for your app. |
 | HTTP 403 when controlling the player | Premium account and an active Connect device. |
 | HTTP 404 when playing | Open Spotify on your phone, desktop, or another device. |
+| Media keys / Now Playing do nothing | Play on this Mac first (librespot must be the active **SpotifyLite** device). Remote control of a phone or another computer does not claim the Mac’s controls. |
+| Now Playing still shows SpotifyLite after switching devices | Wait up to ~30 s if the window is in the background; it should clear on the next poll. Foreground updates within a few seconds. |
 | *Set your Spotify Client ID…* | The login field is empty. |
 | Browser does not return to the app / port in use | Nothing else should be listening on `127.0.0.1:8888`. |
 | `xcodebuild: scheme SpotifyLite not found` | Run `xcodegen generate`. |
