@@ -4,6 +4,14 @@ struct UserProfile: Decodable {
     let id: String
     let displayName: String?
     let product: String?
+    let images: [SpotifyImage]?
+
+    var avatarURL: URL? {
+        guard let images, !images.isEmpty else { return nil }
+        let sorted = images.sorted { ($0.width ?? 0) < ($1.width ?? 0) }
+        return (sorted.first { ($0.width ?? 0) >= 48 } ?? sorted.last)
+            .flatMap { URL(string: $0.url) }
+    }
 }
 
 enum SpotifyAPIError: LocalizedError {

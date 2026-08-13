@@ -8,6 +8,7 @@ struct MainWindow: View {
     @State private var library = LibraryStore()
     @State private var selection: SidebarItem? = .search
     @State private var profile: UserProfile?
+    @State private var avatarImage: NSImage?
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("menuBarEnabled") private var menuBarEnabled = false
     @AppStorage("appearance") private var appearance = "system"
@@ -16,12 +17,14 @@ struct MainWindow: View {
         NavigationSplitView {
             SidebarView(library: library, selection: $selection)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220)
-                .safeAreaInset(edge: .bottom) {
-                    accountFooter
-                }
         } detail: {
             NavigationStack {
                 detailView
+                    .toolbar {
+                        ToolbarItem(placement: .primaryAction) {
+                            accountMenu
+                        }
+                    }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -37,6 +40,7 @@ struct MainWindow: View {
         .frame(minWidth: 800, minHeight: 500)
         .task {
             profile = try? await SpotifyClient.shared.get("me")
+            avatarImage = await Self.loadAvatar(from: profile?.avatarURL)
             player.startPolling()
         }
         .onChange(of: scenePhase) { _, phase in
@@ -58,31 +62,67 @@ struct MainWindow: View {
         }
     }
 
-    private var accountFooter: some View {
-        HStack {
-            Image(systemName: "person.circle.fill")
-                .foregroundStyle(.green)
-            Text(profile?.displayName ?? "")
-                .font(.callout)
-                .lineLimit(1)
-            Spacer()
-            Menu {
-                Toggle("Menu bar icon", isOn: $menuBarEnabled)
-                Menu("Appearance") {
-                    Button("System") { appearance = "system" }
-                    Button("Light") { appearance = "light" }
-                    Button("Dark") { appearance = "dark" }
-                }
-                Divider()
-                Button("Log out") { auth.logout() }
-            } label: {
-                Image(systemName: "ellipsis")
+    private var accountMenu: some View {
+        Menu {
+            Toggle("Menu bar icon", isOn: $menuBarEnabled)
+            Menu("Appearance") {
+                Button("System") { appearance = "system" }
+                Button("Light") { appearance = "light" }
+                Button("Dark") { appearance = "dark" }
             }
-            .menuStyle(.borderlessButton)
-            .frame(width: 24)
+            Divider()
+            Button("Log out") { auth.logout() }
+        } label: {
+            HStack(spacing: 6) {
+                profileAvatar
+                Text(profile?.displayName ?? "Account")
+                    .font(.callout)
+                    .lineLimit(1)
+            }
+            .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(10)
-        .background(.bar)
+        .menuStyle(.borderlessButton)
+        .accessibilityLabel("Account")
+        .accessibilityHint(profile?.displayName ?? "Open account menu")
+        .help("Account")
+    }
+
+    // A toolbar Menu label ignores SwiftUI size modifiers on async images, so
+    // the avatar is pre-rendered as a fixed-size circular NSImage.
+    private var profileAvatar: some View {
+        Group {
+            if let avatarImage {
+                Image(nsImage: avatarImage)
+            } else {
+                Image(systemName: "person.crop.circle.fill")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 24, height: 24)
+                    .foregroundStyle(.green)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private static func loadAvatar(from url: URL?) async -> NSImage? {
+        guard let url,
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let source = NSImage(data: data) else { return nil }
+
+        let side: CGFloat = 24
+        let rendered = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            NSBezierPath(ovalIn: rect).addClip()
+            // Aspect-fill: crop the source to a centered square before drawing.
+            let sourceSide = min(source.size.width, source.size.height)
+            let sourceRect = NSRect(
+                x: (source.size.width - sourceSide) / 2,
+                y: (source.size.height - sourceSide) / 2,
+                width: sourceSide, height: sourceSide
+            )
+            source.draw(in: rect, from: sourceRect, operation: .sourceOver, fraction: 1)
+            return true
+        }
+        return rendered
     }
 
     private var colorScheme: ColorScheme? {
