@@ -11,13 +11,22 @@ struct SearchView: View {
     @State private var results: [Track] = []
     @State private var searching = false
     @State private var error: String?
-    @FocusState private var searchFocused: Bool
+    @Environment(KeyboardController.self) private var keyboard
 
     var body: some View {
         VStack(spacing: 0) {
             TextField("Search songs…", text: $query)
                 .textFieldStyle(.roundedBorder)
-                .focused($searchFocused)
+                .bindAppFocus(.searchField)
+                .onSubmit { keyboard.perform(.activate) }
+                .onMoveCommand { direction in
+                    if direction == .down { keyboard.perform(.moveDown) }
+                }
+                .onExitCommand { keyboard.perform(.cancel) }
+                .onKeyPress(.escape) {
+                    keyboard.perform(.cancel)
+                    return .handled
+                }
                 .padding(12)
 
             if let error {
@@ -27,22 +36,36 @@ struct SearchView: View {
                 ContentUnavailableView(query.isEmpty ? "Search Spotify" : (searching ? "Searching…" : "No results"),
                                        systemImage: "magnifyingglass")
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(results) { track in
-                            TrackRow(track: track, player: player) {
-                                Task { await player.play(trackURI: track.uri) }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(results.enumerated()), id: \.offset) { index, track in
+                                TrackRow(track: track, player: player, keyboardIndex: index) {
+                                    Task { await player.play(trackURI: track.uri) }
+                                }
+                                .id(index)
+                                Divider().padding(.leading, 56)
                             }
-                            Divider().padding(.leading, 56)
+                        }
+                    }
+                    .onChange(of: keyboard.navigation.listIndex) { _, index in
+                        if keyboard.navigation.zone == .list {
+                            proxy.scrollTo(index, anchor: .center)
                         }
                     }
                 }
             }
         }
         .navigationTitle("Search")
-        .onAppear { searchFocused = true }
+        .onAppear {
+            if keyboard.navigation.zone != .list {
+                keyboard.navigation.zone = .search
+            }
+            registerKeyboardList()
+        }
+        .onChange(of: results.count) { _, _ in registerKeyboardList() }
         .onReceive(NotificationCenter.default.publisher(for: .focusSpotifySearch)) { _ in
-            searchFocused = true
+            keyboard.navigation.zone = .search
         }
         .task(id: query) {
             let trimmed = query.trimmingCharacters(in: .whitespaces)
@@ -61,10 +84,17 @@ struct SearchView: View {
                     "search", query: ["q": trimmed, "type": "track", "limit": "10"])
                 results = response.tracks?.items ?? []
                 error = nil
+                registerKeyboardList()
             } catch is CancellationError {
             } catch {
                 if !Task.isCancelled { self.error = error.localizedDescription }
             }
+        }
+    }
+
+    private func registerKeyboardList() {
+        keyboard.registerList(tracks: results) { track in
+            Task { await player.play(trackURI: track.uri) }
         }
     }
 }

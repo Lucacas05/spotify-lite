@@ -6,9 +6,11 @@ struct MainWindow: View {
     var player: PlayerStore
 
     @State private var library = LibraryStore()
+    @State private var keyboard = KeyboardController()
     @State private var selection: SidebarItem? = .search
     @State private var profile: UserProfile?
     @State private var avatarImage: NSImage?
+    @FocusState private var focus: AppFocus?
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("menuBarEnabled") private var menuBarEnabled = false
     @AppStorage("appearance") private var appearance = "system"
@@ -35,8 +37,49 @@ struct MainWindow: View {
                 PlayerBarView(player: player)
             }
         }
+        .overlay {
+            if keyboard.navigation.commandPaletteOpen {
+                CommandPaletteView(keyboard: keyboard, player: player)
+            }
+            if keyboard.navigation.cheatsheetOpen {
+                CheatsheetView(keyboard: keyboard)
+            }
+        }
         .preferredColorScheme(colorScheme)
-        .background { keyboardShortcuts }
+        .background { GlobalKeyboardShortcuts(keyboard: keyboard) }
+        // Applied after safeAreaInset/overlay so PlayerBarView and the
+        // palette/cheatsheet subtrees also see the controller.
+        .environment(keyboard)
+        .environment(\.appFocus, $focus)
+        .onChange(of: keyboard.navigation) { _, _ in
+            if focus != keyboard.focusTarget {
+                focus = keyboard.focusTarget
+            }
+        }
+        .onChange(of: focus) { _, newFocus in
+            keyboard.applyNativeFocus(newFocus)
+        }
+        .onChange(of: keyboard.navigation.sidebarIndex) { _, index in
+            guard keyboard.sidebarItems.indices.contains(index) else { return }
+            let item = keyboard.sidebarItems[index]
+            if selection != item, keyboard.navigation.zone == .sidebar {
+                selection = item
+            }
+        }
+        .onChange(of: selection) { _, newSelection in
+            if let newSelection, let index = keyboard.sidebarItems.firstIndex(of: newSelection) {
+                keyboard.navigation.sidebarIndex = index
+            }
+        }
+        .onAppear {
+            keyboard.player = player
+            keyboard.onSelectSidebarItem = { selection = $0 }
+            keyboard.registerSidebar(playlists: library.playlists)
+            focus = keyboard.focusTarget
+        }
+        .onChange(of: library.playlists.count) { _, _ in
+            keyboard.registerSidebar(playlists: library.playlists)
+        }
         .frame(minWidth: 800, minHeight: 500)
         .task {
             profile = try? await SpotifyClient.shared.get("me")
@@ -142,27 +185,6 @@ struct MainWindow: View {
         case "dark": return .dark
         default: return nil
         }
-    }
-
-    private var keyboardShortcuts: some View {
-        Group {
-            Button("Search") {
-                selection = .search
-                NotificationCenter.default.post(name: .focusSpotifySearch, object: nil)
-            }
-                .keyboardShortcut("f", modifiers: .command)
-            Button("Go to Search") { selection = .search }
-                .keyboardShortcut("1", modifiers: .command)
-            Button("Go to Liked Songs") { selection = .likedSongs }
-                .keyboardShortcut("2", modifiers: .command)
-            Button("Play or pause") { Task { await player.togglePlayPause() } }
-                .keyboardShortcut(.space, modifiers: [])
-        }
-        // `hidden()` also disables keyboard shortcuts. Keep these buttons in
-        // the interaction hierarchy, but out of layout and accessibility.
-        .frame(width: 0, height: 0)
-        .opacity(0)
-        .accessibilityHidden(true)
     }
 
     private func errorBanner(_ message: String) -> some View {

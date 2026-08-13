@@ -140,6 +140,8 @@ final class PlayerStore {
     private(set) var queue: [Track] = []
     private(set) var queueIsLoading = false
     var lastError: String?
+    /// Optimistic volume so keyboard +/- update the slider without waiting for poll.
+    var volumePercent: Int = 50
 
     let localEngine = LibrespotEngine()
 
@@ -182,6 +184,9 @@ final class PlayerStore {
                 isPlaying: refreshedState?.isPlaying ?? false,
                 receivedAt: now
             )
+            if let volume = refreshedState?.device?.volumePercent {
+                volumePercent = volume
+            }
             lastError = nil
         } catch {
             lastError = error.localizedDescription
@@ -285,10 +290,20 @@ final class PlayerStore {
     }
 
     func setVolume(_ percent: Int) async {
+        volumePercent = min(100, max(0, percent))
         await run(refreshAfter: false) {
             try await SpotifyClient.shared.command("PUT", "me/player/volume",
-                                                   query: ["volume_percent": String(percent)])
+                                                   query: ["volume_percent": String(volumePercent)])
         }
+    }
+
+    func bumpVolume(_ delta: Int) async {
+        await setVolume(volumePercent + delta)
+    }
+
+    func seekBy(seconds: Int) async {
+        let target = progress(at: Date()) + seconds * 1000
+        await seek(to: target)
     }
 
     func transferPlayback(to device: Device) async {

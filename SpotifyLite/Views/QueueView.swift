@@ -2,6 +2,7 @@ import SwiftUI
 
 struct QueueView: View {
     var player: PlayerStore
+    @Environment(KeyboardController.self) private var keyboard
 
     var body: some View {
         Group {
@@ -14,25 +15,44 @@ struct QueueView: View {
                     systemImage: "text.line.first.and.arrowtriangle.forward",
                     description: Text("Add songs with “Play next”."))
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(player.queue.enumerated()), id: \.offset) { index, track in
-                            HStack(spacing: 10) {
-                                Text("\(index + 1)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 24, alignment: .trailing)
-                                TrackRow(track: track, player: player, showAlbumLink: true) {
-                                    Task { await player.play(trackURI: track.uri) }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(player.queue.enumerated()), id: \.offset) { index, track in
+                                HStack(spacing: 10) {
+                                    Text("\(index + 1)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 24, alignment: .trailing)
+                                    TrackRow(
+                                        track: track,
+                                        player: player,
+                                        showAlbumLink: true,
+                                        keyboardIndex: index,
+                                        keyboardZone: .queue
+                                    ) {
+                                        Task { await player.play(trackURI: track.uri) }
+                                    }
                                 }
+                                .id(index)
+                                Divider().padding(.leading, 64)
                             }
-                            Divider().padding(.leading, 64)
+                        }
+                    }
+                    .onChange(of: keyboard.navigation.queueIndex) { _, index in
+                        if keyboard.navigation.zone == .queue {
+                            proxy.scrollTo(index, anchor: .center)
                         }
                     }
                 }
             }
         }
         .frame(width: 420, height: 440)
+        .onExitCommand { keyboard.perform(.cancel) }
+        .onKeyPress(.escape) {
+            keyboard.perform(.cancel)
+            return .handled
+        }
         .safeAreaInset(edge: .top) {
             HStack {
                 Text("Queue")

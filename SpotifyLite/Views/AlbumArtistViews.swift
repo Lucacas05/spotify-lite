@@ -7,6 +7,7 @@ struct AlbumDetailView: View {
 
     @State private var album: AlbumDetailResponse?
     @State private var error: String?
+    @Environment(KeyboardController.self) private var keyboard
 
     var body: some View {
         Group {
@@ -42,8 +43,8 @@ struct AlbumDetailView: View {
                         .padding(.horizontal, 20)
 
                         LazyVStack(spacing: 0) {
-                            ForEach(Array(album.tracks.items.enumerated()), id: \.offset) { _, track in
-                                TrackRow(track: track, player: player, showAlbumLink: false) {
+                            ForEach(Array(album.tracks.items.enumerated()), id: \.offset) { index, track in
+                                TrackRow(track: track, player: player, showAlbumLink: false, keyboardIndex: index) {
                                     Task { await player.play(contextURI: album.uri, trackURI: track.uri) }
                                 }
                                 Divider().padding(.leading, 56)
@@ -57,13 +58,23 @@ struct AlbumDetailView: View {
             }
         }
         .navigationTitle(album?.name ?? albumName)
+        .onAppear { registerKeyboardList() }
+        .onChange(of: album?.id) { _, _ in registerKeyboardList() }
         .task(id: albumID) { await load() }
+    }
+
+    private func registerKeyboardList() {
+        guard let album else { return }
+        keyboard.registerList(tracks: album.tracks.items) { track in
+            Task { await player.play(contextURI: album.uri, trackURI: track.uri) }
+        }
     }
 
     private func load() async {
         do {
             album = try await SpotifyClient.shared.get("albums/\(albumID)")
             error = nil
+            registerKeyboardList()
         } catch {
             self.error = error.localizedDescription
         }
@@ -78,6 +89,7 @@ struct ArtistDetailView: View {
     @State private var artist: ArtistDetailResponse?
     @State private var tracks: [Track] = []
     @State private var error: String?
+    @Environment(KeyboardController.self) private var keyboard
 
     var body: some View {
         Group {
@@ -112,8 +124,8 @@ struct ArtistDetailView: View {
                             ContentUnavailableView("No songs available", systemImage: "music.note")
                         } else {
                             LazyVStack(spacing: 0) {
-                                ForEach(Array(tracks.enumerated()), id: \.offset) { _, track in
-                                    TrackRow(track: track, player: player) {
+                                ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
+                                    TrackRow(track: track, player: player, keyboardIndex: index) {
                                         Task { await player.play(trackURI: track.uri) }
                                     }
                                     Divider().padding(.leading, 56)
@@ -128,7 +140,15 @@ struct ArtistDetailView: View {
             }
         }
         .navigationTitle(artist?.name ?? artistName)
+        .onAppear { registerKeyboardList() }
+        .onChange(of: tracks.count) { _, _ in registerKeyboardList() }
         .task(id: artistID) { await load() }
+    }
+
+    private func registerKeyboardList() {
+        keyboard.registerList(tracks: tracks) { track in
+            Task { await player.play(trackURI: track.uri) }
+        }
     }
 
     private func load() async {
@@ -138,6 +158,7 @@ struct ArtistDetailView: View {
             artist = try await artistRequest
             tracks = try await tracksRequest.tracks
             error = nil
+            registerKeyboardList()
         } catch {
             self.error = error.localizedDescription
         }

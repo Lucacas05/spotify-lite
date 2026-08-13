@@ -35,6 +35,7 @@ struct SidebarView: View {
     var library: LibraryStore
     var player: PlayerStore
     @Binding var selection: SidebarItem?
+    @Environment(KeyboardController.self) private var keyboard
 
     var body: some View {
         List(selection: $selection) {
@@ -59,7 +60,19 @@ struct SidebarView: View {
                 }
             }
         }
-        .task { await library.loadPlaylists() }
+        .bindAppFocus(.sidebar)
+        .onKeyPress(.return) {
+            keyboard.perform(.activate)
+            return .handled
+        }
+        .onExitCommand { keyboard.perform(.cancel) }
+        .task {
+            await library.loadPlaylists()
+            keyboard.registerSidebar(playlists: library.playlists)
+        }
+        .onChange(of: library.playlists.count) { _, _ in
+            keyboard.registerSidebar(playlists: library.playlists)
+        }
     }
 
     private func sidebarLabel(title: String, icon: String, isCurrent: Bool) -> some View {
