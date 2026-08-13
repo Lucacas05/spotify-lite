@@ -1,10 +1,16 @@
 import Foundation
 import Observation
+import os
 
 /// Runs librespot as a supervised child process so this Mac shows up as a
 /// Spotify Connect device named "SpotifyLite" — no official Spotify app needed.
-/// Authentication reuses the app's OAuth token (requires the `streaming` scope
-/// and a Premium account). The token goes in the environment, never in argv.
+///
+/// Authentication: librespot's own OAuth flow, NOT the app's token. Tokens
+/// issued to a custom client ID pass the classic session login but are then
+/// denied by login5 with INVALID_CREDENTIALS when spirc registers the Connect
+/// device, so playback never works with them. `--enable-oauth` uses librespot's
+/// own client ID (one browser approval), caches reusable credentials in the
+/// system cache, and later launches log in silently from that cache.
 @MainActor
 @Observable
 final class LibrespotEngine {
@@ -20,6 +26,7 @@ final class LibrespotEngine {
     private(set) var status: Status = .stopped
     private var process: Process?
     private var recentStderr: [String] = []
+    private let logger = Logger(subsystem: "com.lucas.spotifylite", category: "librespot")
 
     var isRunning: Bool {
         if case .running = status { return true }
@@ -31,10 +38,11 @@ final class LibrespotEngine {
         status = .starting
         do {
             let installation = try LibrespotLocator.locate()
-            let token = try await SpotifyClient.shared.validAccessToken()
-            try launch(installation: installation, accessToken: token)
+            try launch(installation: installation)
+            logger.info("launched \(installation.version, privacy: .public) from \(installation.binaryURL.path, privacy: .public)")
             status = .running(version: installation.version)
         } catch {
+            logger.error("start failed: \(error.localizedDescription, privacy: .public)")
             status = .failed(error.localizedDescription)
             process = nil
         }
@@ -49,12 +57,18 @@ final class LibrespotEngine {
         status = .stopped
     }
 
-    private func launch(installation: LibrespotLocator.Installation, accessToken: String) throws {
+    /// True once librespot has cached reusable credentials from a previous login.
+    var needsAuthorization: Bool {
+        guard let dir = try? cacheDirectory() else { return true }
+        return !FileManager.default.fileExists(atPath: dir.appending(path: "credentials.json").path)
+    }
+
+    private func launch(installation: LibrespotLocator.Installation) throws {
         let cacheURL = try cacheDirectory()
 
         let process = Process()
         process.executableURL = installation.binaryURL
-        process.arguments = [
+        var arguments = [
             "--name", Self.deviceName,
             "--backend", "rodio",
             "--zeroconf-backend", "dns-sd",
@@ -62,16 +76,21 @@ final class LibrespotEngine {
             "--bitrate", "320",
             "--system-cache", cacheURL.path,
         ]
-        var environment = ProcessInfo.processInfo.environment
-        environment["LIBRESPOT_ACCESS_TOKEN"] = accessToken
-        process.environment = environment
+        if needsAuthorization {
+            // One-time: librespot opens the default browser so the user can
+            // approve access; the resulting credentials land in the cache.
+            arguments.append("--enable-oauth")
+        }
+        process.arguments = arguments
 
         process.standardOutput = FileHandle.nullDevice
         let stderr = Pipe()
         process.standardError = stderr
+        let logFileHandle = try? stderrLogHandle()
         stderr.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let line = String(data: data, encoding: .utf8) else { return }
+            logFileHandle?.write(data)
             Task { @MainActor in self?.recordStderr(line) }
         }
 
@@ -84,9 +103,19 @@ final class LibrespotEngine {
     }
 
     private func handleTermination(code: Int32) {
+        logger.error("terminated with code \(code)")
         guard process != nil else { return }  // stop() already handled it
         process = nil
         let detail = recentStderr.suffix(3).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        if detail.contains("INVALID_CREDENTIALS") || detail.contains("Login request was denied") {
+            // Stored credentials went bad; drop them so the next start
+            // re-runs the browser authorization instead of failing forever.
+            if let dir = try? cacheDirectory() {
+                try? FileManager.default.removeItem(at: dir.appending(path: "credentials.json"))
+            }
+            status = .failed("Spotify rejected the saved credentials. They were reset — try playing again to re-authorize.")
+            return
+        }
         status = .failed(detail.isEmpty
             ? "librespot exited with code \(code)."
             : "librespot exited with code \(code): \(detail)")
@@ -94,11 +123,20 @@ final class LibrespotEngine {
 
     private func recordStderr(_ chunk: String) {
         for line in chunk.split(separator: "\n") where !line.isEmpty {
+            logger.info("\(line, privacy: .public)")
             recentStderr.append(String(line))
         }
         if recentStderr.count > 20 {
             recentStderr.removeFirst(recentStderr.count - 20)
         }
+    }
+
+    /// Full librespot stderr, for diagnosing failures that the in-app banner truncates.
+    private func stderrLogHandle() throws -> FileHandle {
+        let url = try cacheDirectory().appending(path: "stderr.log")
+        // Fresh log per launch so it only ever holds the current run.
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        return try FileHandle(forWritingTo: url)
     }
 
     /// Holds librespot's reusable credential — sensitive, so owner-only permissions.

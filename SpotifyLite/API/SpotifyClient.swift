@@ -26,6 +26,12 @@ enum SpotifyAPIError: LocalizedError {
         case .emptyResponse: return "Spotify returned no data."
         }
     }
+
+    /// PUT /me/player/* responds 404 when no Connect device is active.
+    var isNoActiveDevice: Bool {
+        if case .http(404, _) = self { return true }
+        return false
+    }
 }
 
 /// Web API HTTP layer. Actor: serializes refresh so two requests with an

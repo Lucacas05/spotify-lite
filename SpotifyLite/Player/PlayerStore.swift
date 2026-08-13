@@ -1,6 +1,13 @@
 import Foundation
 import Observation
 
+/// Wraps a local-engine failure so it survives `run`'s error handling with the
+/// specific cause instead of the generic "no active device" message.
+struct LocalPlaybackError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
 struct PlaybackProgressState {
     struct PendingSeek {
         let trackID: String?
@@ -277,27 +284,37 @@ final class PlayerStore {
     /// Starts the local librespot engine and moves playback to this Mac, so the
     /// app works standalone with no official Spotify client open anywhere.
     func playOnThisMac() async {
+        guard let device = await ensureLocalDevice() else { return }
+        await transferPlayback(to: device)
+    }
+
+    /// Starts librespot (if needed) and waits until it registers as a Connect
+    /// device. Returns the device, or nil after setting `lastError`.
+    private func ensureLocalDevice() async -> Device? {
         await localEngine.start()
         guard localEngine.isRunning else {
             if case .failed(let message) = localEngine.status { lastError = message }
-            return
+            return nil
         }
 
-        // The new Connect device takes a moment to register with Spotify.
-        for attempt in 0..<10 {
-            try? await Task.sleep(for: .seconds(attempt == 0 ? 1.5 : 1))
+        // The new Connect device takes a moment to register with Spotify —
+        // longer on first run, when the user still has to approve access in
+        // the browser that librespot's OAuth flow just opened.
+        let attempts = localEngine.needsAuthorization ? 60 : 10
+        for attempt in 0..<attempts {
             await loadDevices()
             if let device = devices.first(where: { $0.name == LibrespotEngine.deviceName }) {
-                await transferPlayback(to: device)
-                return
+                return device
             }
             if !localEngine.isRunning { break }
+            try? await Task.sleep(for: .seconds(attempt == 0 ? 1.5 : 1))
         }
         if case .failed(let message) = localEngine.status {
             lastError = message
         } else {
             lastError = "The local player started but never showed up as a Spotify device. Try again."
         }
+        return nil
     }
 
     func stopLocalPlayback() {
@@ -313,7 +330,23 @@ final class PlayerStore {
         } else if let trackURI {
             body["uris"] = [trackURI]
         }
-        await run { try await SpotifyClient.shared.command("PUT", "me/player/play", body: body.isEmpty ? nil : body) }
+        await run {
+            do {
+                try await SpotifyClient.shared.command("PUT", "me/player/play", body: body.isEmpty ? nil : body)
+            } catch let error as SpotifyAPIError where error.isNoActiveDevice {
+                // No active Connect device anywhere: fall back to the local
+                // librespot engine and target it explicitly.
+                guard let device = await ensureLocalDevice(), let deviceID = device.id else {
+                    // ensureLocalDevice already set lastError to the real cause;
+                    // rethrowing the 404 would mask it behind the generic message.
+                    throw LocalPlaybackError(message: lastError ?? error.localizedDescription)
+                }
+                try await SpotifyClient.shared.command(
+                    "PUT", "me/player/play",
+                    query: ["device_id": deviceID],
+                    body: body.isEmpty ? nil : body)
+            }
+        }
     }
 
     func progress(at date: Date = .now) -> Int {
