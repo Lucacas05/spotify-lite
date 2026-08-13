@@ -13,7 +13,7 @@ struct MainWindow: View {
                     .foregroundStyle(.green)
                 Text("Hola, \(profile.displayName ?? profile.id)")
                     .font(.title)
-                if profile.product != "premium" {
+                if let product = profile.product, product != "premium" {
                     Text("Cuenta sin Premium: el playback local no estará disponible, pero el control remoto sí.")
                         .font(.callout)
                         .foregroundStyle(.secondary)

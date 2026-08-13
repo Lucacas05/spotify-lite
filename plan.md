@@ -95,7 +95,7 @@ El corazón de lo que pediste: al pulsar "Iniciar sesión", se abre la página o
 - [ ] `PKCE.swift`: generar `code_verifier` (64 chars aleatorios) y `code_challenge` (SHA256 + base64url) con CryptoKit.
 - [ ] `AuthManager.login()`:
   - Construir URL de `https://accounts.spotify.com/authorize` con `client_id`, `response_type=code`, `redirect_uri=http://127.0.0.1:<puerto>/callback`, `code_challenge_method=S256`, `code_challenge` y `scope`.
-  - Scopes: `user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative user-library-read streaming`.
+  - Scopes: `user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative user-library-read user-read-private streaming`.
   - Levantar un mini servidor HTTP local efímero en `127.0.0.1` (Network.framework) y abrir la URL en el navegador por defecto con `NSWorkspace.open` (si ya hay sesión de Spotify en el navegador, es un clic).
   - En el callback HTTP, extraer `code`, responder una página de "vuelve a la app" y apagar el servidor.
 - [ ] `AuthManager.exchangeCode()`: `POST https://accounts.spotify.com/api/token` con `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier`. Respuesta: `access_token` (expira en 1 h) + `refresh_token`.

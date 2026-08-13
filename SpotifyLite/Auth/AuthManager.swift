@@ -17,7 +17,7 @@ struct TokenResponse: Decodable {
 enum SpotifyAuthConfig {
     static let redirectPort: UInt16 = 8888
     static let redirectURI = "http://127.0.0.1:8888/callback"
-    static let scopes = "user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative user-library-read streaming"
+    static let scopes = "user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative user-library-read user-read-private streaming"
     static let clientIDDefaultsKey = "clientID"
 }
 
