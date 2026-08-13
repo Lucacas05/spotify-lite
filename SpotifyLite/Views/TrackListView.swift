@@ -228,11 +228,18 @@ private struct TrackListHeader: View {
             await player.togglePlayPause()
             return
         }
-        if shuffled { await player.setShuffle(true) }
         if let contextURI {
-            await player.play(contextURI: contextURI)
+            // Start on a random track so the first song is shuffled too, then
+            // enable shuffle once playback made a device active. Setting
+            // shuffle first fails with 404 when no device is active yet.
+            let startURI = shuffled ? tracks.randomElement()?.uri : nil
+            await player.play(contextURI: contextURI, trackURI: startURI)
         } else {
-            await player.play(uris: tracks.prefix(50).map(\.uri))
+            let uris = shuffled ? tracks.shuffled() : tracks
+            await player.play(uris: uris.prefix(50).map(\.uri))
+        }
+        if player.lastError == nil {
+            await player.setShuffle(shuffled)
         }
     }
 }
