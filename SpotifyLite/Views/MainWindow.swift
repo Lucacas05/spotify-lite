@@ -29,8 +29,6 @@ struct MainWindow: View {
                     }
             }
         }
-        .environment(keyboard)
-        .environment(\.appFocus, $focus)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 if let error = player.lastError {
@@ -49,6 +47,10 @@ struct MainWindow: View {
         }
         .preferredColorScheme(colorScheme)
         .background { GlobalKeyboardShortcuts(keyboard: keyboard) }
+        // Applied after safeAreaInset/overlay so PlayerBarView and the
+        // palette/cheatsheet subtrees also see the controller.
+        .environment(keyboard)
+        .environment(\.appFocus, $focus)
         .onChange(of: keyboard.navigation) { _, _ in
             if focus != keyboard.focusTarget {
                 focus = keyboard.focusTarget

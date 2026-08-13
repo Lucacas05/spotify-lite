@@ -6,10 +6,14 @@ final class KeyboardNavigationTests: XCTestCase {
 
     func testDirectZoneJumps() {
         var state = NavigationState()
-        XCTAssertEqual(apply(.char("1"), to: &state).zone, .sidebar)
-        XCTAssertEqual(apply(.char("2"), to: &state).zone, .list)
-        XCTAssertEqual(apply(.char("4"), to: &state).zone, .player)
-        XCTAssertEqual(apply(.char("/"), to: &state).zone, .search)
+        apply(.char("1"), to: &state)
+        XCTAssertEqual(state.zone, .sidebar)
+        apply(.char("2"), to: &state)
+        XCTAssertEqual(state.zone, .list)
+        apply(.char("4"), to: &state)
+        XCTAssertEqual(state.zone, .player)
+        apply(.char("/"), to: &state)
+        XCTAssertEqual(state.zone, .search)
     }
 
     func testThreeTogglesQueuePopoverAndRestoresFocus() {
@@ -30,7 +34,8 @@ final class KeyboardNavigationTests: XCTestCase {
         XCTAssertNil(KeyboardRouter.action(for: .char("4"), state: state))
         XCTAssertNil(KeyboardRouter.action(for: .char("n"), state: state))
         XCTAssertNil(KeyboardRouter.action(for: .char(" "), state: state))
-        XCTAssertEqual(apply(.char("1"), to: &state).zone, .search)
+        apply(.char("1"), to: &state)
+        XCTAssertEqual(state.zone, .search)
     }
 
     func testSearchEscapeReturnsToList() {
