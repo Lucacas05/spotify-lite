@@ -10,32 +10,22 @@ struct PlayerBarView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
 
-            HStack(alignment: .center, spacing: 14) {
-                playableArtwork
+            HStack(alignment: .center, spacing: 16) {
+                nowPlayingInfo
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(player.state?.item?.name ?? "Nothing playing")
-                        .font(.system(size: 14, weight: .semibold))
-                        .lineLimit(1)
-                    Text(player.state?.item?.artistNames ?? "")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    transportControls
-                }
-                .frame(minWidth: 160, maxWidth: 360, alignment: .leading)
+                transportControls
 
-                Spacer(minLength: 12)
-
-                HStack(alignment: .center, spacing: 16) {
+                HStack(alignment: .center, spacing: 14) {
                     PlayerQueueButton(player: player)
                     PlayerVolumeSlider(player: player, volume: $volume)
                     PlayerDeviceMenu(player: player)
                 }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 10)
-            .padding(.top, 8)
+            .padding(.top, 6)
         }
         .background(.bar)
         .onChange(of: player.state?.device?.volumePercent) { _, newValue in
@@ -44,52 +34,65 @@ struct PlayerBarView: View {
         .task { await player.loadDevices() }
     }
 
-    private var playableArtwork: some View {
-        ZStack {
-            PlayerArtwork(url: player.state?.item?.artworkURL, size: 56, corner: 8)
-            Button { Task { await player.togglePlayPause() } } label: {
-                Image(systemName: (player.state?.isPlaying ?? false) ? "pause.fill" : "play.fill")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 56, height: 56)
-                    .background(Color.black.opacity(0.35))
+    private var nowPlayingInfo: some View {
+        HStack(spacing: 12) {
+            PlayerArtwork(url: player.state?.item?.artworkURL, size: 44, corner: 6)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(player.state?.item?.name ?? "Nothing playing")
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                Text(player.state?.item?.artistNames ?? "")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .buttonStyle(.plain)
-            .help("Play or pause")
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var transportControls: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 20) {
             Button { Task { await player.toggleShuffle() } } label: {
-                Label("Shuffle", systemImage: "shuffle")
-                    .font(.system(size: 11, weight: .semibold))
+                Image(systemName: "shuffle")
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(player.isShuffling ? Color.green : Color.secondary)
-                    .frame(height: 22)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(player.isShuffling ? "Disable shuffle" : "Enable shuffle")
 
             Button { Task { await player.previous() } } label: {
                 Image(systemName: "backward.end.fill")
-                    .font(.system(size: 11))
-                    .frame(width: 22, height: 22)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Previous")
 
+            Button { Task { await player.togglePlayPause() } } label: {
+                Image(systemName: (player.state?.isPlaying ?? false) ? "pause.fill" : "play.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color(nsColor: .windowBackgroundColor))
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(Color.primary))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Play or pause")
+
             Button { Task { await player.next() } } label: {
                 Image(systemName: "forward.end.fill")
-                    .font(.system(size: 11))
-                    .frame(width: 22, height: 22)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Next")
         }
-        .foregroundStyle(.secondary)
+        .fixedSize()
     }
 }
 
