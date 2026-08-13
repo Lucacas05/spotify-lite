@@ -1,0 +1,23 @@
+name: SpotifyLite
+options:
+  bundleIdPrefix: com.lucas
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+targets:
+  SpotifyLite:
+    type: application
+    platform: macOS
+    sources: [SpotifyLite]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lucas.spotifylite
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "5.10"
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_APP_SANDBOX: NO
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Lucas Sotomayor Barrios. MIT License."
+        CODE_SIGN_STYLE: Automatic
