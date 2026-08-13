@@ -8,6 +8,46 @@ final class SpotifyModelsTests: XCTestCase {
         return decoder
     }()
 
+    func testTrackPagingCursorUsesRawItemsAndStopsAtTheLastPage() {
+        var cursor = TrackPagingCursor()
+
+        cursor.advance(rawItemCount: 100, total: 162, next: "next-page")
+        XCTAssertEqual(cursor.offset, 100)
+        XCTAssertEqual(cursor.total, 162)
+        XCTAssertTrue(cursor.hasMore)
+
+        // The raw page may contain a null/unplayable track; its entry still
+        // advances Spotify's offset and must not cause the page to repeat.
+        cursor.advance(rawItemCount: 62, total: 162, next: nil)
+        XCTAssertEqual(cursor.offset, 162)
+        XCTAssertFalse(cursor.hasMore)
+    }
+
+    func testTrackPagingCursorResetAllowsOneInitialRequest() {
+        var cursor = TrackPagingCursor()
+        cursor.advance(rawItemCount: 1, total: 1, next: nil)
+
+        cursor.reset()
+
+        XCTAssertEqual(cursor.offset, 0)
+        XCTAssertEqual(cursor.total, 0)
+        XCTAssertTrue(cursor.hasMore)
+    }
+
+    func testPlaybackPollingSlowsDownWhileIdle() {
+        XCTAssertEqual(PlaybackPollingPolicy.intervalSeconds(isPlaying: true), 5)
+        XCTAssertEqual(PlaybackPollingPolicy.intervalSeconds(isPlaying: false), 30)
+    }
+
+    func testTrackPagingCursorStopsOnAnEmptyPage() {
+        var cursor = TrackPagingCursor()
+
+        cursor.advance(rawItemCount: 0, total: 10, next: "inconsistent-next-page")
+
+        XCTAssertEqual(cursor.offset, 0)
+        XCTAssertFalse(cursor.hasMore)
+    }
+
     func testTrackDecodesSpotifyPayloadAndFormatsPresentationValues() throws {
         let json = #"""
         {

@@ -8,6 +8,12 @@ struct LocalPlaybackError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+enum PlaybackPollingPolicy {
+    static func intervalSeconds(isPlaying: Bool) -> Int {
+        isPlaying ? 5 : 30
+    }
+}
+
 struct PlaybackProgressState {
     struct PendingSeek {
         let trackID: String?
@@ -162,7 +168,12 @@ final class PlayerStore {
         pollTask = Task {
             while !Task.isCancelled {
                 await refresh()
-                try? await Task.sleep(for: .seconds(5))
+                // Keep playback responsive, but avoid 720 requests/hour while
+                // paused or empty. Scene-inactive polling is stopped entirely.
+                let seconds = PlaybackPollingPolicy.intervalSeconds(
+                    isPlaying: state?.isPlaying ?? false
+                )
+                try? await Task.sleep(for: .seconds(seconds))
             }
         }
     }

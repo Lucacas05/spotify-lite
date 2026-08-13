@@ -1,6 +1,15 @@
 import Foundation
+import AppKit
 import Observation
 import SwiftUI
+
+private final class WeakNativeView {
+    weak var value: NSView?
+
+    init(_ value: NSView) {
+        self.value = value
+    }
+}
 
 @MainActor
 @Observable
@@ -8,8 +17,11 @@ final class KeyboardController {
     var navigation = NavigationState(zone: .search)
 
     var sidebarItems: [SidebarItem] = [.search, .likedSongs]
-    var listTracks: [Track] = []
+    private(set) var listCount = 0
+    @ObservationIgnored private var listTrackAt: ((Int) -> Track?)?
     var playListTrack: ((Track) -> Void)?
+    @ObservationIgnored private var nativeViewFocus: AppFocus?
+    @ObservationIgnored private var nativeView: WeakNativeView?
     var onSelectSidebarItem: ((SidebarItem) -> Void)?
     var player: PlayerStore?
 
@@ -20,8 +32,7 @@ final class KeyboardController {
     var selectedTrack: Track? {
         switch navigation.zone {
         case .list:
-            return listTracks.indices.contains(navigation.listIndex)
-                ? listTracks[navigation.listIndex] : nil
+            return listTrackAt?(navigation.listIndex)
         case .queue:
             let queue = player?.queue ?? []
             return queue.indices.contains(navigation.queueIndex) ? queue[navigation.queueIndex] : nil
@@ -47,7 +58,7 @@ final class KeyboardController {
     func makeContext() -> NavigationContext {
         NavigationContext(
             sidebarCount: max(sidebarItems.count, 1),
-            listCount: listTracks.count,
+            listCount: listCount,
             queueCount: player?.queue.count ?? 0,
             playerControlCount: PlayerControl.allCases.count,
             searchItemIndices: Set(
@@ -78,10 +89,21 @@ final class KeyboardController {
         return intent
     }
 
-    func registerList(tracks: [Track], play: @escaping (Track) -> Void) {
-        listTracks = tracks
+    func registerList(
+        count: Int,
+        trackAt: @escaping (Int) -> Track?,
+        play: @escaping (Track) -> Void
+    ) {
+        listCount = count
+        listTrackAt = trackAt
         playListTrack = play
-        navigation.listIndex = NavigationModel.clamp(navigation.listIndex, count: tracks.count)
+        navigation.listIndex = NavigationModel.clamp(navigation.listIndex, count: count)
+    }
+
+    func registerNativeView(_ view: NSView, for focus: AppFocus) {
+        guard nativeViewFocus != focus || nativeView?.value !== view else { return }
+        nativeViewFocus = focus
+        nativeView = WeakNativeView(view)
     }
 
     func registerSidebar(playlists: [SimplifiedPlaylist]) {
@@ -141,8 +163,8 @@ final class KeyboardController {
                 NotificationCenter.default.post(name: .focusSpotifySearch, object: nil)
             }
         case .playListTrack(let index):
-            guard listTracks.indices.contains(index) else { return }
-            playListTrack?(listTracks[index])
+            guard let track = listTrackAt?(index) else { return }
+            playListTrack?(track)
         case .playQueueTrack(let index):
             guard let player, player.queue.indices.contains(index) else { return }
             let uri = player.queue[index].uri
@@ -167,7 +189,8 @@ final class KeyboardController {
         case .jumpToSearchResults:
             break
         case .openTrackContextMenu:
-            NotificationCenter.default.post(name: .openFocusedTrackMenu, object: nil)
+            guard nativeViewFocus == focusTarget else { return }
+            NativeContextMenu.present(from: nativeView?.value)
         case .addSelectedToQueue:
             guard let track = selectedTrack else { return }
             Task { await player?.playNext(track) }

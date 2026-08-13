@@ -9,6 +9,26 @@ enum TrackListSource: Equatable {
     case likedSongs
 }
 
+/// Tracks the raw Spotify page offset separately from playable tracks. Page
+/// entries may contain a null track, but those entries still consume offsets.
+struct TrackPagingCursor: Equatable {
+    private(set) var offset = 0
+    private(set) var total = 0
+    private(set) var hasMore = true
+
+    mutating func reset() {
+        self = TrackPagingCursor()
+    }
+
+    mutating func advance(rawItemCount: Int, total: Int, next: String?) {
+        let consumed = max(rawItemCount, 0)
+        offset += consumed
+        self.total = max(total, 0)
+        // A malformed empty page must not retry the same offset forever.
+        hasMore = consumed > 0 && next != nil
+    }
+}
+
 /// Track list shared by playlists and Liked Songs.
 struct TrackListView: View {
     let title: String
@@ -17,9 +37,9 @@ struct TrackListView: View {
     var artworkURL: URL? = nil
 
     @State private var tracks: [Track] = []
-    @State private var total = 0
-    @State private var loadedItemCount = 0
+    @State private var paging = TrackPagingCursor()
     @State private var loading = false
+    @State private var loadGeneration = 0
     @State private var error: String?
     @Environment(KeyboardController.self) private var keyboard
 
@@ -33,7 +53,7 @@ struct TrackListView: View {
             title: title,
             source: source,
             artworkURL: artworkURL ?? tracks.first?.artworkURL,
-            total: total,
+            total: paging.total,
             tracks: tracks,
             player: player
         )
@@ -54,21 +74,25 @@ struct TrackListView: View {
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             header
-                            ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
+                            ForEach(tracks.indices, id: \.self) { index in
+                                let track = tracks[index]
                                 TrackRow(track: track, player: player, keyboardIndex: index) {
                                     Task { await player.play(contextURI: contextURI, trackURI: track.uri) }
                                 }
                                 .id(index)
-                                .onAppear {
-                                    // Fallback for slow connections or an interrupted
-                                    // preload: request the next page before hitting the bottom.
-                                    if index >= tracks.count - 30 {
-                                        Task { await loadMore() }
-                                    }
-                                }
                                 Divider().padding(.leading, 56)
                             }
-                            if loading { ProgressView().padding() }
+                            if paging.hasMore, paging.offset > 0 {
+                                ProgressView()
+                                    .padding()
+                                    // One sentinel replaces 30 per-row tasks. A new
+                                    // offset gives each page exactly one load trigger.
+                                    .task(id: paging.offset) {
+                                        await loadMore(generation: loadGeneration)
+                                    }
+                            } else if loading {
+                                ProgressView().padding()
+                            }
                         }
                         // Keep the last row fully above the player bar,
                         // which lives outside this ScrollView.
@@ -83,74 +107,72 @@ struct TrackListView: View {
             }
         }
         .navigationTitle(title)
-        .navigationSubtitle(total > 0 ? "\(total) songs" : "")
+        .navigationSubtitle(paging.total > 0 ? "\(paging.total) songs" : "")
         .onAppear { registerKeyboardList() }
         .onChange(of: tracks.count) { _, _ in registerKeyboardList() }
         .task(id: source) {
+            loadGeneration += 1
+            let generation = loadGeneration
             tracks = []
-            total = 0
-            loadedItemCount = 0
+            paging.reset()
+            loading = false
             error = nil
-            await loadMore()
-            await preloadRemainingPlaylistItems()
+            await loadMore(generation: generation)
         }
     }
 
     private func registerKeyboardList() {
-        keyboard.registerList(tracks: tracks) { track in
+        let currentTracks = $tracks
+        keyboard.registerList(count: tracks.count, trackAt: { index in
+            let values = currentTracks.wrappedValue
+            return values.indices.contains(index) ? values[index] : nil
+        }) { track in
             Task { await player.play(contextURI: contextURI, trackURI: track.uri) }
         }
     }
 
-    private func loadMore() async {
-        guard !loading else { return }
+    private func loadMore(generation: Int) async {
+        guard generation == loadGeneration, !loading, paging.hasMore else { return }
         loading = true
-        defer { loading = false }
+        defer {
+            if generation == loadGeneration { loading = false }
+        }
         do {
             switch source {
             case .playlist(let id):
-                guard loadedItemCount < total || total == 0 else { return }
-
                 // The detail contains the first page (100 items in the
                 // current API). Later pages live under /items.
                 let page: Paging<PlaylistEntry>
-                if loadedItemCount == 0 {
+                if paging.offset == 0 {
                     let response: PlaylistDetailResponse = try await SpotifyClient.shared.get(
                         "playlists/\(id)")
                     page = response.items
                 } else {
                     page = try await SpotifyClient.shared.get(
                         "playlists/\(id)/items",
-                        query: ["limit": "100", "offset": String(loadedItemCount)])
+                        query: ["limit": "100", "offset": String(paging.offset)])
                 }
 
+                guard !Task.isCancelled, generation == loadGeneration else { return }
+                loading = false
                 tracks.append(contentsOf: page.items.compactMap(\.item))
-                loadedItemCount += page.items.count
-                total = page.total
+                paging.advance(rawItemCount: page.items.count, total: page.total, next: page.next)
             case .likedSongs:
-                guard tracks.count < total || total == 0 else { return }
                 let page: Paging<TrackItem> = try await SpotifyClient.shared.get(
-                    "me/tracks", query: ["limit": "50", "offset": String(tracks.count)])
+                    "me/tracks", query: ["limit": "50", "offset": String(paging.offset)])
+                guard !Task.isCancelled, generation == loadGeneration else { return }
+                loading = false
                 tracks.append(contentsOf: page.items.compactMap(\.track))
-                total = page.total
+                paging.advance(rawItemCount: page.items.count, total: page.total, next: page.next)
             }
+        } catch is CancellationError {
         } catch {
-            self.error = error.localizedDescription
+            if generation == loadGeneration, !Task.isCancelled {
+                self.error = error.localizedDescription
+            }
         }
     }
 
-    /// Show the first page as soon as possible and finish the rest in the
-    /// background, yielding to SwiftUI between requests.
-    private func preloadRemainingPlaylistItems() async {
-        guard case .playlist = source else { return }
-
-        while loadedItemCount < total, !Task.isCancelled, error == nil {
-            let previousCount = loadedItemCount
-            await loadMore()
-            guard loadedItemCount > previousCount else { break }
-            await Task.yield()
-        }
-    }
 }
 
 private struct TrackListHeader: View {
@@ -271,7 +293,6 @@ struct TrackRow: View {
     let onPlay: () -> Void
 
     @Environment(KeyboardController.self) private var keyboard
-    @State private var rowView: NSView?
 
     private var isCurrent: Bool {
         player.state?.isCurrentTrack(track) ?? false
@@ -350,12 +371,23 @@ struct TrackRow: View {
         .accessibilityValue(isCurrent ? "Now playing" : "")
         .onTapGesture(count: 2) { onPlay() }
         .contextMenu { trackMenuItems }
-        .background(NSViewCapture { rowView = $0 })
-        .modifier(TrackRowKeyboard(index: keyboardIndex, zone: keyboardZone))
-        .onReceive(NotificationCenter.default.publisher(for: .openFocusedTrackMenu)) { _ in
-            guard isKeyboardSelected else { return }
-            NativeContextMenu.present(from: rowView)
+        .background {
+            // The context-menu bridge only exists for the selected row. Long
+            // lists therefore keep one native capture instead of one per item.
+            if let keyboardIndex, isKeyboardSelected {
+                TrackRowViewCapture(
+                    focus: keyboardZone == .queue
+                        ? .queueRow(keyboardIndex)
+                        : .listRow(keyboardIndex),
+                    keyboard: keyboard
+                )
+            }
         }
+        .modifier(TrackRowKeyboard(
+            index: keyboardIndex,
+            zone: keyboardZone,
+            isSelected: isKeyboardSelected
+        ))
     }
 
     @ViewBuilder
@@ -385,12 +417,34 @@ struct TrackRow: View {
     }
 }
 
+/// Registers the row's native host without mutating SwiftUI state. The old
+/// capture scheduled an async @State write and a notification subscription on
+/// every row, which forced long LazyVStacks to retain their entire view graph.
+private struct TrackRowViewCapture: NSViewRepresentable {
+    let focus: AppFocus
+    var keyboard: KeyboardController
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        keyboard.registerNativeView(view, for: focus)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        keyboard.registerNativeView(nsView, for: focus)
+    }
+}
+
 private struct TrackRowKeyboard: ViewModifier {
     var index: Int?
     var zone: FocusZone
+    var isSelected: Bool
 
     func body(content: Content) -> some View {
-        if let index {
+        // Logical selection lives in KeyboardController. Only its current row
+        // needs a native focus responder; making every row focusable retained
+        // thousands of FocusState graph nodes in long playlists.
+        if let index, isSelected {
             content.keyboardNavigable(focus: zone == .queue ? .queueRow(index) : .listRow(index))
         } else {
             content

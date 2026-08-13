@@ -8,10 +8,11 @@ struct ContentView: View {
         switch auth.state {
         case .signedIn:
             MainWindow(auth: auth, player: player)
-                .task {
-                    // Warm up the local Connect device so the first play
-                    // doesn't have to wait for librespot to register.
-                    await player.localEngine.start()
+                .onDisappear {
+                    // Closing the window may leave playback in the menu bar,
+                    // but logging out must release the local player.
+                    if case .signedIn = auth.state { return }
+                    player.stopLocalPlayback()
                 }
         case .signedOut, .authorizing:
             LoginView(auth: auth)

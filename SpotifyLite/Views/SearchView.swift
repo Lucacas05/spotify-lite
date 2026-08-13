@@ -39,7 +39,8 @@ struct SearchView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 0) {
-                            ForEach(Array(results.enumerated()), id: \.offset) { index, track in
+                            ForEach(results.indices, id: \.self) { index in
+                                let track = results[index]
                                 TrackRow(track: track, player: player, keyboardIndex: index) {
                                     Task { await player.play(trackURI: track.uri) }
                                 }
@@ -93,7 +94,11 @@ struct SearchView: View {
     }
 
     private func registerKeyboardList() {
-        keyboard.registerList(tracks: results) { track in
+        let currentResults = $results
+        keyboard.registerList(count: results.count, trackAt: { index in
+            let values = currentResults.wrappedValue
+            return values.indices.contains(index) ? values[index] : nil
+        }) { track in
             Task { await player.play(trackURI: track.uri) }
         }
     }

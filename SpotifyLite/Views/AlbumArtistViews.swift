@@ -43,7 +43,8 @@ struct AlbumDetailView: View {
                         .padding(.horizontal, 20)
 
                         LazyVStack(spacing: 0) {
-                            ForEach(Array(album.tracks.items.enumerated()), id: \.offset) { index, track in
+                            ForEach(album.tracks.items.indices, id: \.self) { index in
+                                let track = album.tracks.items[index]
                                 TrackRow(track: track, player: player, showAlbumLink: false, keyboardIndex: index) {
                                     Task { await player.play(contextURI: album.uri, trackURI: track.uri) }
                                 }
@@ -64,9 +65,14 @@ struct AlbumDetailView: View {
     }
 
     private func registerKeyboardList() {
-        guard let album else { return }
-        keyboard.registerList(tracks: album.tracks.items) { track in
-            Task { await player.play(contextURI: album.uri, trackURI: track.uri) }
+        let currentAlbum = $album
+        keyboard.registerList(count: album?.tracks.items.count ?? 0, trackAt: { index in
+            guard let values = currentAlbum.wrappedValue?.tracks.items,
+                  values.indices.contains(index) else { return nil }
+            return values[index]
+        }) { track in
+            guard let contextURI = currentAlbum.wrappedValue?.uri else { return }
+            Task { await player.play(contextURI: contextURI, trackURI: track.uri) }
         }
     }
 
@@ -124,7 +130,8 @@ struct ArtistDetailView: View {
                             ContentUnavailableView("No songs available", systemImage: "music.note")
                         } else {
                             LazyVStack(spacing: 0) {
-                                ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
+                                ForEach(tracks.indices, id: \.self) { index in
+                                    let track = tracks[index]
                                     TrackRow(track: track, player: player, keyboardIndex: index) {
                                         Task { await player.play(trackURI: track.uri) }
                                     }
@@ -146,7 +153,11 @@ struct ArtistDetailView: View {
     }
 
     private func registerKeyboardList() {
-        keyboard.registerList(tracks: tracks) { track in
+        let currentTracks = $tracks
+        keyboard.registerList(count: tracks.count, trackAt: { index in
+            let values = currentTracks.wrappedValue
+            return values.indices.contains(index) ? values[index] : nil
+        }) { track in
             Task { await player.play(trackURI: track.uri) }
         }
     }

@@ -13,33 +13,34 @@ enum LibrespotProcessLifetime {
     /// `bash -c` script: `$0` is the librespot binary, `$@` its arguments.
     /// stdin is a pipe kept open by the parent.
     ///
-    /// macOS `/bin/bash` is 3.2 (no `wait -n`), so the loop watches both the
-    /// child and the stdin reader. Parent death closes the pipe → `cat` exits
-    /// → librespot is killed. librespot death makes bash exit so the engine's
-    /// termination handler still fires.
+    /// Parent death closes the pipe → `cat` signals the waiting shell →
+    /// librespot is killed. librespot death makes `wait` return normally. This
+    /// is event-driven: the previous loop spawned `/bin/sleep` four times per
+    /// second for the entire playback-engine lifetime.
     ///
     /// In a non-interactive shell, backgrounded jobs get stdin redirected to
     /// /dev/null, so the reader must inherit the real stdin via fd 3 — plain
-    /// `cat &` sees instant EOF and the wrapper kills librespot at ~0.25s.
+    /// `cat &` would see instant EOF and kill librespot immediately.
     static let wrapperScript = """
         cleanup() { kill "$child" "$reader" 2>/dev/null || true; wait "$child" 2>/dev/null || true; }
-        trap cleanup EXIT TERM INT HUP
+        parent_closed() {
+          trap - EXIT TERM INT HUP
+          kill "$child" "$reader" 2>/dev/null || true
+          wait "$child" 2>/dev/null || true
+          exit 0
+        }
+        trap cleanup EXIT INT HUP
+        trap parent_closed TERM
         exec 3<&0
         "$0" "$@" &
         child=$!
-        cat <&3 >/dev/null &
+        (cat <&3 >/dev/null; kill -TERM "$$") &
         reader=$!
-        while kill -0 "$child" 2>/dev/null && kill -0 "$reader" 2>/dev/null; do
-          sleep 0.25
-        done
-        if kill -0 "$child" 2>/dev/null; then
-          kill "$child" 2>/dev/null || true
-          wait "$child" 2>/dev/null || true
-          exit 0
-        fi
         wait "$child"
         status=$?
         kill "$reader" 2>/dev/null || true
+        wait "$reader" 2>/dev/null || true
+        trap - EXIT TERM INT HUP
         exit "$status"
         """
 

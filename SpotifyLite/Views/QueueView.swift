@@ -18,7 +18,8 @@ struct QueueView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 0) {
-                            ForEach(Array(player.queue.enumerated()), id: \.offset) { index, track in
+                            ForEach(player.queue.indices, id: \.self) { index in
+                                let track = player.queue[index]
                                 HStack(spacing: 10) {
                                     Text("\(index + 1)")
                                         .font(.caption)

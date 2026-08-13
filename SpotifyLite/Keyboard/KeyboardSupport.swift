@@ -24,7 +24,6 @@ extension EnvironmentValues {
 }
 
 extension Notification.Name {
-    static let openFocusedTrackMenu = Notification.Name("openFocusedTrackMenu")
     static let openPlayerDeviceMenu = Notification.Name("openPlayerDeviceMenu")
 }
 
@@ -190,7 +189,8 @@ struct NSViewCapture: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async { onResolve(nsView) }
+        // The representable keeps the same NSView identity across updates.
+        // Re-publishing it would create an unnecessary @State feedback loop.
     }
 }
 
