@@ -1,8 +1,8 @@
 import SwiftUI
 
 enum TrackListSource: Equatable {
-    /// GET /playlists/{id}: llega todo de una vez (el endpoint /tracks da 403
-    /// para apps en dev mode y limit/offset se ignoran).
+    /// La primera página llega en GET /playlists/{id}; las siguientes se
+    /// recuperan desde /playlists/{id}/items usando su offset.
     case playlist(id: String)
     /// GET /me/tracks, paginado con limit máximo 50.
     case likedSongs
@@ -16,6 +16,7 @@ struct TrackListView: View {
 
     @State private var tracks: [Track] = []
     @State private var total = 0
+    @State private var loadedItemCount = 0
     @State private var loading = false
     @State private var error: String?
 
@@ -39,12 +40,19 @@ struct TrackListView: View {
                                 Task { await player.play(contextURI: contextURI, trackURI: track.uri) }
                             }
                             .onAppear {
-                                if index == tracks.count - 1 { Task { await loadMore() } }
+                                // Respaldo para conexiones lentas o una precarga
+                                // interrumpida: pedir la página antes de tocar fondo.
+                                if index >= tracks.count - 30 {
+                                    Task { await loadMore() }
+                                }
                             }
                             Divider().padding(.leading, 56)
                         }
                         if loading { ProgressView().padding() }
                     }
+                    // Deja la última fila completamente por encima de la barra
+                    // del reproductor, que vive fuera de este ScrollView.
+                    .padding(.bottom, 72)
                 }
             }
         }
@@ -53,8 +61,10 @@ struct TrackListView: View {
         .task(id: source) {
             tracks = []
             total = 0
+            loadedItemCount = 0
             error = nil
             await loadMore()
+            await preloadRemainingPlaylistItems()
         }
     }
 
@@ -65,10 +75,24 @@ struct TrackListView: View {
         do {
             switch source {
             case .playlist(let id):
-                guard tracks.isEmpty else { return }
-                let response: PlaylistDetailResponse = try await SpotifyClient.shared.get("playlists/\(id)")
-                tracks = response.items.items.compactMap(\.item)
-                total = response.items.total
+                guard loadedItemCount < total || total == 0 else { return }
+
+                // El detalle contiene la primera página (100 elementos en la
+                // API actual). Las páginas siguientes viven en /items.
+                let page: Paging<PlaylistEntry>
+                if loadedItemCount == 0 {
+                    let response: PlaylistDetailResponse = try await SpotifyClient.shared.get(
+                        "playlists/\(id)")
+                    page = response.items
+                } else {
+                    page = try await SpotifyClient.shared.get(
+                        "playlists/\(id)/items",
+                        query: ["limit": "100", "offset": String(loadedItemCount)])
+                }
+
+                tracks.append(contentsOf: page.items.compactMap(\.item))
+                loadedItemCount += page.items.count
+                total = page.total
             case .likedSongs:
                 guard tracks.count < total || total == 0 else { return }
                 let page: Paging<TrackItem> = try await SpotifyClient.shared.get(
@@ -78,6 +102,19 @@ struct TrackListView: View {
             }
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    /// Muestra la primera página cuanto antes y completa el resto en segundo
+    /// plano, cediendo ejecución a SwiftUI entre requests.
+    private func preloadRemainingPlaylistItems() async {
+        guard case .playlist = source else { return }
+
+        while loadedItemCount < total, !Task.isCancelled, error == nil {
+            let previousCount = loadedItemCount
+            await loadMore()
+            guard loadedItemCount > previousCount else { break }
+            await Task.yield()
         }
     }
 }

@@ -120,7 +120,7 @@ Con solo la Web API la app ya es útil: navega tu música y controla la reproduc
 
 **Criterio de salida:** buscar una canción, sonarla en el dispositivo activo, controlar play/pausa/volumen desde la app.
 
-> **Nota (descubierto en Fase 2, ago 2026):** las apps en dev mode registradas desde 2025 tienen límites no documentados en la Web API: `/search` acepta `limit` ≤ 10, `/me/tracks` ≤ 50, y `/playlists/{id}/tracks` devuelve 403 — hay que usar `GET /playlists/{id}`, que trae todos los tracks de una vez con cada track envuelto en la clave `item` (no `track`). Verificado con curl; implementado en `TrackListView`/`SearchView`.
+> **Nota (actualizada en Fase 3, ago 2026):** las apps en dev mode registradas desde 2025 tienen límites particulares en la Web API: `/search` acepta `limit` ≤ 10, `/me/tracks` ≤ 50, y el endpoint antiguo `/playlists/{id}/tracks` ya no debe usarse. `GET /playlists/{id}` trae la primera página bajo `items`; las páginas restantes se cargan desde `GET /playlists/{id}/items` con `offset`. Cada entrada envuelve la canción en la clave `item` (no `track`). Verificado con una playlist de 343 canciones e implementado en `TrackListView`/`SearchView`.
 
 ### Fase 3 — Pulido, rendimiento y primer release (2–3 días)
 

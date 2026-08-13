@@ -55,15 +55,19 @@ final class SpotifyModelsTests: XCTestCase {
               },
               { "item": null }
             ],
-            "next": null,
-            "total": 2
+            "next": "https://api.spotify.com/v1/playlists/playlist-1/items?offset=2&limit=2",
+            "total": 343
           }
         }
         """#
 
         let response = try decoder.decode(PlaylistDetailResponse.self, from: Data(json.utf8))
 
-        XCTAssertEqual(response.items.total, 2)
+        XCTAssertEqual(response.items.total, 343)
+        XCTAssertEqual(
+            response.items.next,
+            "https://api.spotify.com/v1/playlists/playlist-1/items?offset=2&limit=2"
+        )
         XCTAssertEqual(response.items.items.compactMap(\.item).map(\.name), ["Wrapped Track"])
     }
 

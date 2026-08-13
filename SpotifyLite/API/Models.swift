@@ -65,8 +65,8 @@ struct TrackItem: Decodable {
     let track: Track?
 }
 
-/// GET /playlists/{id} (apps en dev mode desde 2025): /playlists/{id}/tracks
-/// devuelve 403, y aquí el track viene bajo la clave "item".
+/// Elemento paginado de playlist. La API actual usa la clave "item" tanto en
+/// el detalle inicial como en /playlists/{id}/items.
 struct PlaylistEntry: Decodable {
     let item: Track?
 }
