@@ -1,13 +1,14 @@
 import SwiftUI
 
 struct ContentView: View {
+    @State private var auth = AuthManager()
+
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "music.note")
-                .font(.system(size: 48))
-            Text("SpotifyLite")
-                .font(.title)
+        switch auth.state {
+        case .signedIn:
+            MainWindow(auth: auth)
+        case .signedOut, .authorizing:
+            LoginView(auth: auth)
         }
-        .frame(minWidth: 600, minHeight: 400)
     }
 }
