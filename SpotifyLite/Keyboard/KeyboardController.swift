@@ -165,10 +165,6 @@ final class KeyboardController {
         case .playListTrack(let index):
             guard let track = listTrackAt?(index) else { return }
             playListTrack?(track)
-        case .playQueueTrack(let index):
-            guard let player, player.queue.indices.contains(index) else { return }
-            let uri = player.queue[index].uri
-            Task { await player.play(trackURI: uri) }
         case .togglePlayPause:
             Task { await player?.togglePlayPause() }
         case .seekBySeconds(let seconds):

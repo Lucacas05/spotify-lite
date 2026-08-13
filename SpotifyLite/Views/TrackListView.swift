@@ -287,6 +287,7 @@ struct TrackRow: View {
     var showAlbumLink = true
     var keyboardIndex: Int? = nil
     var keyboardZone: FocusZone = .list
+    var behavior: TrackRowBehavior = .catalog
     let onPlay: () -> Void
 
     @Environment(KeyboardController.self) private var keyboard
@@ -338,14 +339,17 @@ struct TrackRow: View {
                 }
             }
             Spacer()
-            Button {
-                Task { await player.playNext(track) }
-            } label: {
-                Image(systemName: "text.line.last.and.arrowtriangle.forward")
+            if behavior.showsPlayNextAction {
+                Button {
+                    Task { await player.playNext(track) }
+                } label: {
+                    Image(systemName: "text.line.last.and.arrowtriangle.forward")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Play next")
+                .accessibilityLabel("Play next")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Play next")
             Text(track.durationFormatted)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -366,7 +370,11 @@ struct TrackRow: View {
         .contentShape(Rectangle())
         .accessibilityAddTraits(isCurrent ? .isSelected : [])
         .accessibilityValue(isCurrent ? "Now playing" : "")
-        .onTapGesture(count: 2) { onPlay() }
+        .onTapGesture(count: 2) {
+            if behavior.activatesPlayback {
+                onPlay()
+            }
+        }
         .contextMenu { trackMenuItems }
         .background {
             // The context-menu bridge only exists for the selected row. Long
@@ -389,8 +397,12 @@ struct TrackRow: View {
 
     @ViewBuilder
     private var trackMenuItems: some View {
-        Button("Play") { onPlay() }
-        Button("Play next") { Task { await player.playNext(track) } }
+        if behavior.activatesPlayback {
+            Button("Play") { onPlay() }
+        }
+        if behavior.showsPlayNextAction {
+            Button("Play next") { Task { await player.playNext(track) } }
+        }
         if showAlbumLink, let album = track.album, let albumID = album.id {
             NavigationLink("View album") {
                 AlbumDetailView(albumID: albumID, albumName: album.name, player: player)
