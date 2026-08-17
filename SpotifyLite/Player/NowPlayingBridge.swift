@@ -16,6 +16,8 @@ struct URLSessionArtworkFetcher: NowPlayingArtworkFetching {
 @MainActor
 final class NowPlayingArtworkLoader {
     private let fetcher: any NowPlayingArtworkFetching
+    /// Bounded so long sessions do not retain every high-resolution cover.
+    static let maxCachedArtworks = 8
     private var cache: [URL: Data] = [:]
     private(set) var currentTrackID: String?
 
@@ -46,6 +48,9 @@ final class NowPlayingArtworkLoader {
                 loadedTrackID: trackID,
                 currentTrackID: currentTrackID
             ) else { return nil }
+            if cache.count >= Self.maxCachedArtworks {
+                cache.removeAll(keepingCapacity: true)
+            }
             cache[url] = data
             return data
         } catch {
@@ -138,6 +143,8 @@ final class SystemNowPlayingMediaCenter: NowPlayingMediaCenter {
             commandCenter.changeRepeatModeCommand,
             commandCenter.changeShuffleModeCommand,
             commandCenter.likeCommand,
+            commandCenter.enableLanguageOptionCommand,
+            commandCenter.disableLanguageOptionCommand,
             commandCenter.dislikeCommand,
             commandCenter.bookmarkCommand,
             commandCenter.ratingCommand,
@@ -180,10 +187,10 @@ final class NowPlayingBridge {
 
     init(
         mediaCenter: (any NowPlayingMediaCenter)? = nil,
-        artworkLoader: NowPlayingArtworkLoader = NowPlayingArtworkLoader()
+        artworkLoader: NowPlayingArtworkLoader? = nil
     ) {
         self.mediaCenter = mediaCenter ?? SystemNowPlayingMediaCenter()
-        self.artworkLoader = artworkLoader
+        self.artworkLoader = artworkLoader ?? NowPlayingArtworkLoader()
         self.mediaCenter.commandHandler = { [weak self] command in
             self?.handle(command)
         }
