@@ -143,7 +143,35 @@ Extended Quota Mode is out of scope for this project (map #1 decided one Client 
 
 ### Note on the community forum
 
-Spotify runs an official staff-moderated mega-thread, [February 2026 Spotify for Developers update: thread](https://community.spotify.com/t5/Spotify-for-Developers/February-2026-Spotify-for-Developers-update-thread/td-p/7330564), which is where staff have been answering migration questions. `community.spotify.com` returns **403 to automated fetching**, so its contents could not be quoted first-hand here; search-engine excerpts indicate staff confirmed that the restrictions do not apply to extended quota clients, that `get_artist_albums` was marked deprecated in the docs **by mistake** and is not actually deprecated, and that playlist items are visible only for playlists the user owns or collaborates on. Treat all of that as **unverified** until read directly in a browser. No excerpt found staff discussing the search `limit` specifically.
+Spotify runs an official staff-moderated mega-thread, [February 2026 Spotify for Developers update: thread](https://community.spotify.com/t5/Spotify-for-Developers/February-2026-Spotify-for-Developers-update-thread/td-p/7330564) (opened 6 February 2026, 18 pages). `community.spotify.com` returns **403 to automated fetching**, so nothing there could be quoted first-hand; the excerpts below came through search-engine indexing and should be **re-read in a browser before being relied on**.
+
+Staff in that thread restated the postponement in the same terms as the blog update, and added that "only the main account needs to be on Premium, the authorized accounts used for testing do not need to have a subscription". They also warned they were "not in a position to respond to every reply in this thread". **No staff reply discussing the `/search` `limit` was found** — the documentation is the only authority on that number, which is fine, since it is stronger evidence than a forum post would be.
+
+Two other staff-attributed corrections surfaced: that `get_artist_albums` was marked deprecated in the docs **by mistake** and is not actually deprecated, and that playlist items are returned only for playlists the user owns or collaborates on.
+
+## Error shape when `limit > 10` (strong, but by analogy)
+
+Spotify does not document the error. No `/search` reproduction was found. The closest hard evidence is the identical cap on `GET /artists/{id}/albums`, which is reproducible:
+
+- [spotipy#1231](https://github.com/spotipy-dev/spotipy/issues/1231) (11 March 2026, closed) — `limit=15` gives `returned 400 due to Invalid limit`. The reporter adds: "From my experimentation, 10 is the highest allowed limit. Current default is 20." The maintainer confirms it is the February 2026 API change, not a library bug.
+- [spotipy#1236](https://github.com/spotipy-dev/spotipy/issues/1236) (16 May 2026, open) — `limit=20` gives `http status: 400, code: -1 - ...: Invalid limit`.
+
+So expect **HTTP 400** with `{"error":{"status":400,"message":"Invalid limit"}}`. Caution: the same `Invalid limit` string is emitted for unrelated causes — in [music-assistant/support#5360](https://github.com/music-assistant/support/issues/5360) it actually meant missing catalog access. It is a misleading generic message, so do not surface it verbatim to users. (**inferred** for `/search`; **documented by reproduction** for `/artists/{id}/albums`.)
+
+## Other dev-mode failure modes worth knowing (third-party, reproduced)
+
+These are not about search, but they shape what a paging-heavy design will run into:
+
+- **24-hour rate-limit lockouts**, sometimes on the first request: `Your application has reached a rate/request limit. Retry will occur after: 86400 s` — [spotDL#2618](https://github.com/spotDL/spotify-downloader/issues/2618) and several others, February–April 2026. Directly relevant: multiplying one search into ten requests is exactly the behaviour that trips this.
+- **Premium lapse** returns a distinctive message, consistent across [rspotify#550](https://github.com/ramsayleung/rspotify/issues/550), [spotipy#1233](https://github.com/spotipy-dev/spotipy/issues/1233) and [spotDL#2634](https://github.com/spotDL/spotify-downloader/issues/2634): "Active premium subscription required for the owner of the app. When the subscription status changes, it can take a few hours before requests are allowed again."
+- **Non-allowlisted user** → 403 with "Check settings on https://developer.spotify.com/dashboard, the user may not be registered."
+- **Playlist items page size was also cut, 100 → 50** ([spotipy#1227](https://github.com/spotipy-dev/spotipy/issues/1227), merged 18 February 2026). Worth checking against `TrackListView`, which was written against the old page size.
+- **`/playlists/{id}` returns 200 while `/playlists/{id}/tracks` returns 403**, reported independently in March and July 2026 ([community 7367439](https://community.spotify.com/t5/Spotify-for-Developers/403-Forbidden-on-all-playlist-track-requests-even-with-new-app/td-p/7367439), [community 7489835](https://community.spotify.com/t5/Spotify-for-Developers/Unable-to-access-playlist-tracks-via-Web-API-403-Forbidden/td-p/7489835), [spotDL#2621](https://github.com/spotDL/spotify-downloader/issues/2621)) — sometimes on the user's *own* playlists, which the documented ownership rule does not explain. Partly the `/tracks` → `/items` rename this project already handled.
+- **The rollout was gradual and per-account**, so `GET /v1/playlists/{id}` briefly returned both `items` and `tracks` ([rspotify#565](https://github.com/ramsayleung/rspotify/issues/565), 10 April 2026). Reports dated February–April 2026 can legitimately contradict each other for this reason.
+
+### One incorrect reading in circulation
+
+[tekore#345](https://github.com/felix-hilden/tekore/issues/345), maintainer comment of 9 March 2026: "They postponed the relevant API changes indefinitely, let's monitor." That is **wrong for newly created Client IDs** and is contradicted by the curl reproductions in spotipy, rspotify and spotDL. The postponement covered endpoint access for *existing* integrations only. Flagged here because it is the kind of claim that could otherwise get repeated into a design decision.
 
 ## Also relevant to what search returns (documented)
 
