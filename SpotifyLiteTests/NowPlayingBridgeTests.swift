@@ -30,7 +30,7 @@ final class FakeNowPlayingMediaCenter: NowPlayingMediaCenter {
         clearCount += 1
         currentSnapshot = nil
         commandsEnabled = false
-        setPlaybackState(.stopped, 0)
+        setPlaybackState(.stopped, rate: 0)
     }
 
     func emit(_ command: NowPlayingCommand) {
@@ -57,7 +57,7 @@ actor ControllableArtworkFetcher: NowPlayingArtworkFetching {
         startedURLs.insert(url)
         startedWaiters[url]?.resume()
         startedWaiters[url] = nil
-        return try await withCheckedContinuation { pending[url] = $0 }
+        return try await withCheckedThrowingContinuation { pending[url] = $0 }
     }
 }
 
@@ -89,10 +89,12 @@ final class NowPlayingBridgeTests: XCTestCase {
     }
 
     private func makeBridge(
-        mediaCenter: FakeNowPlayingMediaCenter = FakeNowPlayingMediaCenter(),
-        loader: NowPlayingArtworkLoader = NowPlayingArtworkLoader(fetcher: ImmediateArtworkFetcher())
+        mediaCenter: FakeNowPlayingMediaCenter? = nil,
+        loader: NowPlayingArtworkLoader? = nil
     ) -> (NowPlayingBridge, FakeNowPlayingMediaCenter) {
-        (NowPlayingBridge(mediaCenter: mediaCenter, artworkLoader: loader), mediaCenter)
+        let mediaCenter = mediaCenter ?? FakeNowPlayingMediaCenter()
+        let loader = loader ?? NowPlayingArtworkLoader(fetcher: ImmediateArtworkFetcher())
+        return (NowPlayingBridge(mediaCenter: mediaCenter, artworkLoader: loader), mediaCenter)
     }
 
     func testPlayingSnapshotPublishesMetadataRateAndAudioType() {

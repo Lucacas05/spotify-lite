@@ -209,6 +209,11 @@ final class PlayerStore {
         let changed = isSceneActive != active
         isSceneActive = active
         guard changed else { return }
+        if active {
+            // A background 30 s poll may be mid-sleep; restart so the
+            // foreground 5 s cadence applies immediately.
+            stopPolling()
+        }
         reconcilePolling()
     }
 
