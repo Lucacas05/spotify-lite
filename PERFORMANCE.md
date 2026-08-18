@@ -31,7 +31,7 @@ pgrep -fl 'librespot.*--name SpotifyLite'
 - Playback polling runs every 5 s while playing and backs off to 30 s while idle. In the background it stops, except during local SpotifyLite playback, when it continues every 30 s so Now Playing can follow track changes.
 - The seek-bar `TimelineView` is **removed from the view hierarchy** unless a track is playing and the user is not dragging. Pausing the schedule in place still left layout work in the graph. Tick interval is 0.5 s (time labels only change once per second; position is interpolated). Dragging uses local `@State`, not the timeline.
 - librespot is launched under a stdin-pipe wrapper so the child dies when the parent exits (crash, SIGKILL, Xcode stop). Stale `--name SpotifyLite` processes for the same `--system-cache` are reaped on the next `start()`. The credential cache is not deleted.
-- librespot starts on demand (explicit “Play on this Mac” or playback with no active device), not at sign-in. Its wrapper waits for process/pipe events without a polling loop.
+- librespot starts on demand after **explicit user opt-in only** (“This Mac (set up…)”, then “Play on this Mac”). It does **not** launch to recover from a missing device (404 / no active device), and not at sign-in. Remote control stays the default. Its wrapper waits for process/pipe events without a polling loop.
 - The menu bar icon is opt-in and disabled by default.
 - Artwork cache reserves only 2 MB of RAM and keeps 50 MB on disk.
 - Track lists page incrementally through one bottom sentinel. Rows do not own notification subscriptions or async native-view state writes, so `LazyVStack` can release off-screen rows.

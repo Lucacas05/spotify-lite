@@ -46,7 +46,7 @@ struct MainWindow: View {
                 CheatsheetView(keyboard: keyboard)
             }
         }
-        .sheet(isPresented: Bindable(player).localSetupNeeded) {
+        .sheet(isPresented: Bindable(player).localPlaybackSheetPresented) {
             LibrespotSetupView(player: player)
         }
         .preferredColorScheme(colorScheme)
@@ -87,6 +87,9 @@ struct MainWindow: View {
         .frame(minWidth: 800, minHeight: 500)
         .task {
             profile = try? await SpotifyClient.shared.get("me")
+            if let id = profile?.id {
+                player.bindSpotifyAccount(id)
+            }
             avatarImage = await Self.loadAvatar(from: profile?.avatarURL)
             player.setSceneActive(true)
         }
