@@ -74,25 +74,31 @@ streaming
 
 ## Local playback (play on this Mac)
 
-The app can play audio by itself, with no official Spotify client open anywhere. It launches [librespot](https://github.com/librespot-org/librespot) as a child process that registers this Mac as a Spotify Connect device named **SpotifyLite**, then transfers playback to it. Audio goes straight to CoreAudio.
+Local playback is **opt-in**. Remote control of an existing Spotify Connect device stays the default. A normal Play that gets 404 (no active device) does **not** start librespot.
 
-1. Install librespot once:
+The app can play audio by itself, with no official Spotify client open anywhere, after you consent. It then launches [librespot](https://github.com/librespot-org/librespot) as a child process that registers this Mac as a Spotify Connect device named **SpotifyLite** and transfers playback to it. Audio goes straight to CoreAudio.
+
+1. Install librespot once (or from the in-app sheet):
 
    ```bash
    brew install librespot
    ```
 
-2. In the player bar, open the device menu (speaker icon) and click **Play on this Mac**.
+2. In the player bar, open the device menu (speaker icon) and click **This Mac (set up…)**.
+3. Accept the ToS/warning on the consent sheet. If librespot is missing, copy the brew command and press **Check again**.
+4. After this Spotify account has consented, the item becomes **Play on this Mac** and may start librespot.
 
 Details:
 
-- librespot authenticates with the app's own OAuth token (`streaming` scope); there is no second login and no credentials outside your machine.
+- librespot authenticates with its own OAuth (`--enable-oauth`): one browser approval, then reusable credentials in that account's cache. The app's Web API token is not passed to the child process.
+- Consent is stored per Spotify account so you are not asked on every play.
+- Logout or switching accounts deletes that account's `credentials.json` as well as the Web API token. Credentials are not inherited across accounts.
 - Requires **Premium** (librespot limitation).
 - The child process stops when you quit the app or click **Stop local player**.
 - While SpotifyLite is the active device, the track appears in the macOS Now Playing widget (Control Center / Lock Screen / Touch Bar) with title, artist, album, artwork, and progress. Media keys and AirPods controls play, pause, skip, and go back.
-- Its credential cache lives in `~/Library/Application Support/SpotifyLite/librespot` with owner-only permissions.
+- Credential cache: `~/Library/Application Support/SpotifyLite/librespot/accounts/<spotify-user-id>/` with owner-only permissions.
 
-**Note:** librespot is an unofficial client and its use is against Spotify's terms of service (same as Psst, ncspot, etc.). In practice it is tolerated, but there is a theoretical risk to the account. That is why it is opt-in and the binary is installed by you, not shipped with the app.
+**Note:** librespot is an unofficial client and its use is against Spotify's terms of service (same as Psst, ncspot, etc.). In practice it is tolerated, but there is a theoretical risk to the account. That is why it is opt-in and the binary is installed by you, not shipped with the app. You can keep using remote devices without ever enabling local playback.
 
 ## Premium
 
@@ -139,7 +145,7 @@ xcodebuild test -project SpotifyLite.xcodeproj -scheme SpotifyLite \
   -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
 ```
 
-They cover PKCE, tokens, OAuth scopes, Web API payloads, keyboard navigation, and Now Playing metadata / media-key dispatch.
+They cover PKCE, tokens, OAuth scopes, Web API payloads, keyboard navigation, Now Playing metadata / media-key dispatch, and local-playback opt-in (per-account consent, credential wipe, 404 is not a start trigger).
 
 ## Keyboard shortcuts
 
@@ -182,7 +188,7 @@ If you use an AI coding agent, paste this prompt:
 | `Invalid redirect URI` / `Insecure redirect URI` | The URI in the dashboard must be exactly `http://127.0.0.1:8888/callback`. Do not use `localhost` or custom schemes. |
 | HTTP 403 *User not registered* | Add that account under *User Management* for your app. |
 | HTTP 403 when controlling the player | Premium account and an active Connect device. |
-| HTTP 404 when playing | Open Spotify on your phone, desktop, or another device. |
+| HTTP 404 when playing | Open Spotify on a device. Play does not auto-start librespot; opt in via **This Mac (set up…)** if you want audio on this Mac. |
 | Media keys / Now Playing do nothing | Play on this Mac first (librespot must be the active **SpotifyLite** device). Remote control of a phone or another computer does not claim the Mac’s controls. |
 | Now Playing still shows SpotifyLite after switching devices | Wait up to ~30 s if the window is in the background; it should clear on the next poll. Foreground updates within a few seconds. |
 | *Set your Spotify Client ID…* | The login field is empty. |

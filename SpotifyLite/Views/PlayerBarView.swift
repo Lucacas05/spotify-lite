@@ -351,8 +351,7 @@ private struct PlayerDeviceMenu: View {
             Task { await player.playOnThisMac() }
         } label: {
             HStack {
-                Text(player.localEngine.status == .starting
-                     ? "Starting local player…" : "Play on this Mac")
+                Text(player.localPlaybackMenuTitle)
                 if player.localEngine.isRunning { Image(systemName: "checkmark") }
             }
         }
@@ -381,7 +380,7 @@ private struct PlayerDeviceMenu: View {
     private func presentDeviceMenu() {
         let menu = NSMenu()
         let playLocal = NSMenuItem(
-            title: player.localEngine.status == .starting ? "Starting local player…" : "Play on this Mac",
+            title: player.localPlaybackMenuTitle,
             action: #selector(DeviceMenuTarget.playOnThisMac),
             keyEquivalent: ""
         )

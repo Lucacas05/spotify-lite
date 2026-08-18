@@ -80,7 +80,8 @@ actor SpotifyClient {
         return decoder
     }()
 
-    /// Fresh access token for handing to the librespot child process.
+    /// Fresh access token. Intentionally unused by librespot: issue #16 keeps
+    /// librespot's own OAuth (`--enable-oauth`) and does not auto-wire this path.
     func validAccessToken() async throws -> String {
         if sessionInvalidated { throw SpotifyAPIError.sessionExpired }
         guard var tokens = KeychainStore.load() else { throw SpotifyAPIError.notSignedIn }

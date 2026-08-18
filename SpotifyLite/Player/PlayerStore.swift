@@ -1,13 +1,6 @@
 import Foundation
 import Observation
 
-/// Wraps a local-engine failure so it survives `run`'s error handling with the
-/// specific cause instead of the generic "no active device" message.
-struct LocalPlaybackError: LocalizedError {
-    let message: String
-    var errorDescription: String? { message }
-}
-
 enum PlaybackPollingPolicy {
     static let foregroundPlayingIntervalSeconds = 5
     static let foregroundIdleIntervalSeconds = 30
@@ -162,14 +155,18 @@ final class PlayerStore {
     private(set) var state: PlaybackState?
     private(set) var devices: [Device] = []
     var lastError: String?
-    /// True when local playback needs librespot installed — drives the setup sheet.
-    var localSetupNeeded = false
+    /// Consent / missing-binary sheet for opt-in local playback.
+    var localPlaybackSheetPresented = false
     /// Optimistic volume so keyboard +/- update the slider without waiting for poll.
     var volumePercent: Int = 50
 
     let localEngine = LibrespotEngine()
     @ObservationIgnored
     let nowPlaying: NowPlayingBridge
+    @ObservationIgnored
+    private let consentStore: LocalPlaybackConsentStore
+    @ObservationIgnored
+    private let applicationSupportURL: URL?
 
     private var pollTask: Task<Void, Never>?
     private var pollGeneration = 0
@@ -190,9 +187,22 @@ final class PlayerStore {
 
     private var isSceneActive = false
     private(set) var lastConfirmedDeviceName: String?
+    private(set) var currentSpotifyUserID: String?
+    private(set) var hasLocalPlaybackConsent = false
 
-    init(nowPlaying: NowPlayingBridge? = nil) {
+    init(
+        nowPlaying: NowPlayingBridge? = nil,
+        consentStore: LocalPlaybackConsentStore = LocalPlaybackConsentStore(),
+        applicationSupportURL: URL? = nil
+    ) {
         self.nowPlaying = nowPlaying ?? NowPlayingBridge()
+        self.consentStore = consentStore
+        self.applicationSupportURL = applicationSupportURL
+        self.currentSpotifyUserID = consentStore.lastSignedInUserID
+        self.localEngine.accountUserID = consentStore.lastSignedInUserID
+        if let userID = consentStore.lastSignedInUserID {
+            self.hasLocalPlaybackConsent = consentStore.hasConsent(for: userID)
+        }
         self.nowPlaying.onCommand = { [weak self] command in
             Task { await self?.handleNowPlayingCommand(command) }
         }
@@ -215,6 +225,48 @@ final class PlayerStore {
 
     var isLocalDeviceActive: Bool {
         lastConfirmedDeviceName == LibrespotEngine.deviceName
+    }
+
+    var localPlaybackMenuTitle: String {
+        LocalPlaybackMenuCopy.itemTitle(
+            hasConsent: hasLocalPlaybackConsent,
+            isStarting: localEngine.status == .starting
+        )
+    }
+
+    /// Binds librespot cache and consent to this Spotify account. A different
+    /// user id is treated as an account switch: the previous cache is wiped.
+    func bindSpotifyAccount(_ userID: String) {
+        guard let id = LocalPlaybackConsentStore.normalizedUserID(userID) else { return }
+        if let previous = currentSpotifyUserID ?? consentStore.lastSignedInUserID, previous != id {
+            stopLocalPlayback()
+            wipeLibrespotCredentials(for: previous)
+            localPlaybackSheetPresented = false
+        } else {
+            // Drop the unscoped pre-#16 cache so it cannot be reused by accident.
+            wipeLibrespotCredentials(for: nil)
+        }
+        currentSpotifyUserID = id
+        localEngine.accountUserID = id
+        consentStore.rememberSignedInUser(id)
+        hasLocalPlaybackConsent = consentStore.hasConsent(for: id)
+    }
+
+    func grantLocalPlaybackConsent() {
+        guard let currentSpotifyUserID else { return }
+        consentStore.grantConsent(for: currentSpotifyUserID)
+        hasLocalPlaybackConsent = true
+    }
+
+    @discardableResult
+    func resolveSpotifyAccount() async -> Bool {
+        if currentSpotifyUserID != nil { return true }
+        guard let profile: UserProfile = try? await SpotifyClient.shared.get("me") else {
+            lastError = LibrespotAccountCacheError.missingSpotifyAccount.localizedDescription
+            return false
+        }
+        bindSpotifyAccount(profile.id)
+        return currentSpotifyUserID != nil
     }
 
     func setSceneActive(_ active: Bool) {
@@ -462,9 +514,23 @@ final class PlayerStore {
         }
     }
 
-    /// Starts the local librespot engine and moves playback to this Mac, so the
-    /// app works standalone with no official Spotify client open anywhere.
+    /// Starts the local librespot engine only after this Spotify account has
+    /// consented. Without consent, or if the binary is missing, the sheet opens
+    /// instead of launching a process.
     func playOnThisMac() async {
+        guard await resolveSpotifyAccount() else { return }
+        let mayStart = LocalPlaybackStartPolicy.shouldLaunchLibrespot(
+            for: .explicitOptIn,
+            hasAccountConsent: hasLocalPlaybackConsent
+        )
+        guard mayStart else {
+            localPlaybackSheetPresented = true
+            return
+        }
+        guard LibrespotLocator.isInstalled else {
+            localPlaybackSheetPresented = true
+            return
+        }
         guard let device = await ensureLocalDevice() else { return }
         await transferPlayback(to: device)
         reconcilePolling()
@@ -490,8 +556,8 @@ final class PlayerStore {
             if Task.isCancelled || haltSceneNetwork { return nil }
             if localEngine.isNotInstalled {
                 // Missing binary is a setup task, not an error: show the
-                // install sheet instead of the red banner.
-                localSetupNeeded = true
+                // consent/install sheet instead of the red banner.
+                localPlaybackSheetPresented = true
             } else if case .failed(let message) = localEngine.status {
                 lastError = message
             }
@@ -546,6 +612,12 @@ final class PlayerStore {
         playbackSyncTask = nil
         stopPolling()
         stopLocalPlayback()
+        wipeLibrespotCredentials(for: currentSpotifyUserID ?? consentStore.lastSignedInUserID)
+        consentStore.clearLastSignedInUser()
+        currentSpotifyUserID = nil
+        localEngine.accountUserID = nil
+        hasLocalPlaybackConsent = false
+        localPlaybackSheetPresented = false
         state = nil
         lastConfirmedDeviceName = nil
         lastError = nil
@@ -589,25 +661,9 @@ final class PlayerStore {
             body["uris"] = [trackURI]
         }
         let expectedURI = trackURI ?? uris?.first
+        // 404 / no active device must not start librespot (issue #16, PERFORMANCE.md).
         await run(mutation: .play(expectedURI: expectedURI)) {
-            do {
-                try await SpotifyClient.shared.command("PUT", "me/player/play", body: body.isEmpty ? nil : body)
-            } catch let error as SpotifyAPIError where error.isNoActiveDevice {
-                // No active Connect device anywhere: fall back to the local
-                // librespot engine and target it explicitly.
-                guard let device = await ensureLocalDevice(), let deviceID = device.id else {
-                    // The setup sheet is already telling the user what to do;
-                    // a red banner on top would be noise.
-                    if localSetupNeeded { return }
-                    // ensureLocalDevice already set lastError to the real cause;
-                    // rethrowing the 404 would mask it behind the generic message.
-                    throw LocalPlaybackError(message: lastError ?? error.localizedDescription)
-                }
-                try await SpotifyClient.shared.command(
-                    "PUT", "me/player/play",
-                    query: ["device_id": deviceID],
-                    body: body.isEmpty ? nil : body)
-            }
+            try await SpotifyClient.shared.command("PUT", "me/player/play", body: body.isEmpty ? nil : body)
         }
     }
 
@@ -753,5 +809,20 @@ final class PlayerStore {
             return error.localizedDescription
         }
         return "No se pudo cargar. Inténtalo de nuevo."
+    }
+
+    private func wipeLibrespotCredentials(for userID: String?) {
+        let applicationSupport: URL
+        if let applicationSupportURL {
+            applicationSupport = applicationSupportURL
+        } else if let resolved = try? LibrespotAccountCache.defaultApplicationSupport() {
+            applicationSupport = resolved
+        } else {
+            return
+        }
+        LibrespotAccountCache.wipeCredentials(
+            for: userID,
+            applicationSupport: applicationSupport
+        )
     }
 }
