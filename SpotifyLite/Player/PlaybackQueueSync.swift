@@ -93,27 +93,48 @@ enum PlaybackQueueSync {
     static var propagationDelay: Duration { .milliseconds(400) }
     static var retryDelay: Duration { .milliseconds(350) }
 
-    /// Gate used by `PlayerStore.refresh()`. A skip URI stays ignored even
+    /// URIs the bar has already skipped past. A lagging GET /me/player that
+    /// still reports one of them must not undo later skips.
+    struct SkipPollGuard: Equatable {
+        private(set) var skippedURIs: Set<String> = []
+
+        mutating func record(leaving: String?, nowPlaying: String?) {
+            if let leaving, !leaving.isEmpty {
+                skippedURIs.insert(leaving)
+            }
+            if let nowPlaying {
+                skippedURIs.remove(nowPlaying)
+            }
+        }
+
+        mutating func reset() {
+            skippedURIs.removeAll()
+        }
+
+        /// Empty payloads and any skipped URI are superseded, including an
+        /// older URI after two skips.
+        func isSupersededPoll(reportedPlayingURI: String?) -> Bool {
+            guard !skippedURIs.isEmpty else { return false }
+            guard let reportedPlayingURI else { return true }
+            return skippedURIs.contains(reportedPlayingURI)
+        }
+    }
+
+    /// Gate used by `PlayerStore.refresh()`. Skipped URIs stay ignored even
     /// when the pending mutation is a later play/pause/seek.
     static func shouldApplyPlaybackPoll(
         _ snapshot: PlaybackQueueSnapshot,
         pendingMutation: PlaybackMutation?,
-        ignoringPlayingURI: String?,
+        skipGuard: SkipPollGuard,
         now: Date,
         deadline: Date?
     ) -> Bool {
+        if skipGuard.isSupersededPoll(reportedPlayingURI: snapshot.reportedPlayingURI) {
+            return false
+        }
         var pendingMutation = pendingMutation
-        if let ignoringPlayingURI {
-            guard let reported = snapshot.reportedPlayingURI,
-                  reported != ignoringPlayingURI else {
-                return false
-            }
-            // Poll already left the skipped URI. A leftover skipForward
-            // mutation still looks "stale" against that old URI and must
-            // not block Previous (or another skip) from catching up.
-            if pendingMutation?.ignoresStalePollAfterSuccess == true {
-                pendingMutation = nil
-            }
+        if !skipGuard.skippedURIs.isEmpty, pendingMutation?.ignoresStalePollAfterSuccess == true {
+            pendingMutation = nil
         }
         guard let pendingMutation, let deadline else {
             return true

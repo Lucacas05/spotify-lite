@@ -137,6 +137,16 @@ struct QueueRefreshState {
         discardInFlightRefresh()
     }
 
+    /// Inverse of skip-forward for Previous: put the track Next left back on
+    /// the bar and return the one we are leaving to the head of upcoming.
+    mutating func applyOptimisticSkipBack(returning previous: Track, leaving current: Track?) {
+        currentlyPlaying = previous
+        if let current {
+            upcoming.insert(current, at: 0)
+        }
+        discardInFlightRefresh()
+    }
+
     /// Drop upcoming rows until the player-bar URI is currently playing.
     /// No-op when that URI is not in the snapshot — we do not invent order.
     mutating func alignToPlayingURI(_ uri: String?) {

@@ -188,9 +188,13 @@ final class PlayerStore {
     private var remoteApplyGeneration = 0
     private var pendingPollConfirmation: PlaybackMutation?
     private var pendingPollConfirmationDeadline: Date?
-    /// Survives a later play/pause pending mutation. Polls that still report
-    /// this URI must not undo a skip.
-    private var ignoreStalePlayingURI: String?
+    /// Survives later play/pause mutations. Polls of any URI already skipped
+    /// past — including an older URI after two skips — must not revert the bar.
+    private var skipPollGuard = PlaybackQueueSync.SkipPollGuard()
+    /// Tracks Next removed from the bar, most recent last. Previous uses the
+    /// last one so the bar confirms from the POST, same as Next uses queue.first.
+    /// This is not a Spotify play-history stack: we still POST /me/player/previous.
+    private var skipBackTracks: [Track] = []
     private(set) var isPlaybackCommandInFlight = false
 
     var queue: [Track] { queueState.upcoming }
@@ -280,7 +284,7 @@ final class PlayerStore {
             if !PlaybackQueueSync.shouldApplyPlaybackPoll(
                 snapshot,
                 pendingMutation: pendingPollConfirmation,
-                ignoringPlayingURI: ignoreStalePlayingURI,
+                skipGuard: skipPollGuard,
                 now: Date(),
                 deadline: pendingPollConfirmationDeadline
             ) {
@@ -288,7 +292,7 @@ final class PlayerStore {
             }
             pendingPollConfirmation = nil
             pendingPollConfirmationDeadline = nil
-            ignoreStalePlayingURI = nil
+            skipPollGuard.reset()
             state = refreshedState
             updateLastConfirmedDeviceName(from: refreshedState)
             let now = Date()
@@ -374,8 +378,8 @@ final class PlayerStore {
                 previousURI: self.state?.item?.uri,
                 expectedNextURI: self.queue.first?.uri
             )
-            self.armSkipPollGuard(mutation)
             self.applyOptimisticSkipForward()
+            self.armSkipPollGuard(mutation)
             await self.performSerializedCommand(
                 mutation: mutation,
                 confirmViaExistingPoll: true,
@@ -415,16 +419,18 @@ final class PlayerStore {
     }
 
     func previous() async {
-        // Previous delegates to Spotify. There is no local history stack (#12).
-        // Confirmation is the mutation HTTP result, not a later GET /me/player.
+        // Previous still POSTs to Spotify (#12). The bar confirms from that
+        // POST the same way Next does: optimistic from a track we already
+        // had on the bar, then HTTP success keeps it. No extra GET /me/player.
         await submitPlaybackWork(coalesceKey: .previous) {
             let snapshot = self.capturePlaybackUI()
             let epoch = self.beginPlaybackCommand()
             let mutation = PlaybackMutation.skipBack(previousURI: self.state?.item?.uri)
+            self.applyOptimisticSkipBack()
             self.armSkipPollGuard(mutation)
             await self.performSerializedCommand(
                 mutation: mutation,
-                confirmViaExistingPoll: false,
+                confirmViaExistingPoll: true,
                 revertOptimistic: { self.restorePlaybackUI(snapshot, ifEpoch: epoch) }
             ) {
                 try await SpotifyClient.shared.command("POST", "me/player/previous")
@@ -590,7 +596,8 @@ final class PlayerStore {
         stopLocalPlayback()
         stopPolling()
         clearPollConfirmation()
-        ignoreStalePlayingURI = nil
+        skipPollGuard.reset()
+        skipBackTracks = []
         state = nil
         lastConfirmedDeviceName = nil
         nowPlaying.clear()
@@ -822,9 +829,10 @@ final class PlayerStore {
     }
 
     private func armSkipPollGuard(_ mutation: PlaybackMutation) {
-        if let uri = mutation.playingURIToIgnoreAfterSuccess {
-            ignoreStalePlayingURI = uri
-        }
+        skipPollGuard.record(
+            leaving: mutation.playingURIToIgnoreAfterSuccess,
+            nowPlaying: state?.item?.uri
+        )
     }
 
     private func beginPlaybackCommand() -> Int {
@@ -837,7 +845,8 @@ final class PlayerStore {
         var progressState: PlaybackProgressState
         var volumePercent: Int
         var queueState: QueueRefreshState
-        var ignoreStalePlayingURI: String?
+        var skipPollGuard: PlaybackQueueSync.SkipPollGuard
+        var skipBackTracks: [Track]
         var pendingPollConfirmation: PlaybackMutation?
         var pendingPollConfirmationDeadline: Date?
     }
@@ -848,7 +857,8 @@ final class PlayerStore {
             progressState: progressState,
             volumePercent: volumePercent,
             queueState: queueState,
-            ignoreStalePlayingURI: ignoreStalePlayingURI,
+            skipPollGuard: skipPollGuard,
+            skipBackTracks: skipBackTracks,
             pendingPollConfirmation: pendingPollConfirmation,
             pendingPollConfirmationDeadline: pendingPollConfirmationDeadline
         )
@@ -864,7 +874,8 @@ final class PlayerStore {
         progressState = snapshot.progressState
         volumePercent = snapshot.volumePercent
         queueState = snapshot.queueState
-        ignoreStalePlayingURI = snapshot.ignoreStalePlayingURI
+        skipPollGuard = snapshot.skipPollGuard
+        skipBackTracks = snapshot.skipBackTracks
         pendingPollConfirmation = snapshot.pendingPollConfirmation
         pendingPollConfirmationDeadline = snapshot.pendingPollConfirmationDeadline
     }
@@ -886,6 +897,9 @@ final class PlayerStore {
 
     private func applyOptimisticSkipForward() {
         guard let upcoming = queue.first else { return }
+        if let current = state?.item {
+            skipBackTracks.append(current)
+        }
         if let current = state {
             state = current.applying(item: upcoming, replaceItem: true, progressMs: 0)
         }
@@ -897,6 +911,26 @@ final class PlayerStore {
             receivedAt: Date()
         )
         queueState.applyOptimisticSkipForward()
+        queueLoadTask?.cancel()
+        publishNowPlaying()
+    }
+
+    /// Confirm Previous on the bar from the mutation, same as Next: use the
+    /// track Next already showed, then POST /me/player/previous.
+    private func applyOptimisticSkipBack() {
+        guard let previous = skipBackTracks.popLast() else { return }
+        let leaving = state?.item
+        if let current = state {
+            state = current.applying(item: previous, replaceItem: true, progressMs: 0)
+        }
+        progressState.applyRemoteState(
+            trackID: previous.id ?? previous.uri,
+            durationMs: previous.durationMs,
+            progressMs: 0,
+            isPlaying: progressState.isPlaying,
+            receivedAt: Date()
+        )
+        queueState.applyOptimisticSkipBack(returning: previous, leaving: leaving)
         queueLoadTask?.cancel()
         publishNowPlaying()
     }
