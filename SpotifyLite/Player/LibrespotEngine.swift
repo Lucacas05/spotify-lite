@@ -10,8 +10,9 @@ import os
 /// issued to a custom client ID pass the classic session login but are then
 /// denied by login5 with INVALID_CREDENTIALS when spirc registers the Connect
 /// device, so playback never works with them. `--enable-oauth` uses librespot's
-/// own client ID (one browser approval), caches reusable credentials in the
-/// system cache, and later launches log in silently from that cache.
+/// own client ID (one browser approval), caches reusable credentials in a
+/// **per-account** system cache, and later launches log in silently from that
+/// cache. Issue #16: do not pass the app's Web API token to this process.
 @MainActor
 @Observable
 final class LibrespotEngine {
@@ -28,6 +29,9 @@ final class LibrespotEngine {
     }
 
     private(set) var status: Status = .stopped
+    /// Spotify account whose `credentials.json` this engine may read or write.
+    /// Required before `start()`; logout clears it after wiping that file.
+    var accountUserID: String?
     /// True when the last start failed because the binary is missing —
     /// the UI shows the install sheet instead of an error banner.
     private(set) var isNotInstalled = false
@@ -83,7 +87,8 @@ final class LibrespotEngine {
     /// True once librespot has cached reusable credentials from a previous login.
     var needsAuthorization: Bool {
         guard let dir = try? cacheDirectory() else { return true }
-        return !FileManager.default.fileExists(atPath: dir.appending(path: "credentials.json").path)
+        return !FileManager.default.fileExists(
+            atPath: dir.appending(path: LibrespotAccountCache.credentialsFileName).path)
     }
 
     private func runStart(resetAttempts: Bool) async {
@@ -119,9 +124,15 @@ final class LibrespotEngine {
         status = .starting
         await reapStaleInstances()
         guard !Task.isCancelled else { return }
+        guard accountUserID != nil else {
+            status = .failed(LibrespotAccountCacheError.missingSpotifyAccount.localizedDescription)
+            userSessionActive = false
+            return
+        }
 
         do {
-            let installation = try LibrespotLocator.locate()
+            let installation = try await LibrespotLocator.locate()
+            guard !Task.isCancelled else { return }
             if installation.versionIsUnknown {
                 // Overbuild constraint: unknown version never gets its own UI.
                 // Warn in the log; keep going. Too-old is the existing `.failed` path.
@@ -152,14 +163,20 @@ final class LibrespotEngine {
     /// SIGTERM leftover SpotifyLite librespot processes (orphans from crash /
     /// Xcode stop). Does not touch `credentials.json`.
     private func reapStaleInstances() async {
-        let cachePath: String
-        do {
-            cachePath = try cacheDirectory().path
-        } catch {
-            return
+        var cachePaths: [String] = []
+        if let accountPath = try? cacheDirectory().path {
+            cachePaths.append(accountPath)
         }
-        let pids = LibrespotProcessLifetime.stalePIDs(
-            deviceName: Self.deviceName, cachePath: cachePath)
+        if let applicationSupport = try? LibrespotAccountCache.defaultApplicationSupport() {
+            cachePaths.append(
+                LibrespotAccountCache.legacyCacheDirectory(applicationSupport: applicationSupport).path)
+        }
+        var pids: [pid_t] = []
+        for cachePath in cachePaths {
+            pids.append(contentsOf: LibrespotProcessLifetime.stalePIDs(
+                deviceName: Self.deviceName, cachePath: cachePath))
+        }
+        pids = Array(Set(pids)).sorted()
         guard !pids.isEmpty else { return }
         logger.info("reaping \(pids.count, privacy: .public) stale librespot process(es)")
         LibrespotProcessLifetime.terminate(pids: pids)
@@ -241,7 +258,8 @@ final class LibrespotEngine {
             return
         case .resetCredentialsAndFail(let message):
             if let dir = try? cacheDirectory() {
-                try? FileManager.default.removeItem(at: dir.appending(path: "credentials.json"))
+                try? FileManager.default.removeItem(
+                    at: dir.appending(path: LibrespotAccountCache.credentialsFileName))
             }
             degradeToRemoteControl(message: message)
         case .restart(let delay, let attempt):
@@ -292,12 +310,12 @@ final class LibrespotEngine {
         return try FileHandle(forWritingTo: url)
     }
 
-    /// Holds librespot's reusable credential — sensitive, so owner-only permissions.
+    /// Holds this Spotify account's reusable credential — owner-only permissions.
     private func cacheDirectory() throws -> URL {
-        let base = try FileManager.default.url(for: .applicationSupportDirectory,
-                                               in: .userDomainMask,
-                                               appropriateFor: nil, create: true)
-        let dir = base.appending(path: "SpotifyLite/librespot")
+        guard let accountUserID else { throw LibrespotAccountCacheError.missingSpotifyAccount }
+        let applicationSupport = try LibrespotAccountCache.defaultApplicationSupport()
+        let dir = try LibrespotAccountCache.cacheDirectory(
+            for: accountUserID, applicationSupport: applicationSupport)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
         return dir

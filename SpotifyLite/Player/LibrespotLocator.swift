@@ -175,7 +175,16 @@ enum LibrespotLocator {
     }
 
     /// Probes brew prefixes and fixed paths, then validates `--version`.
-    static func locate() throws -> Installation {
+    /// Runs off the calling actor: `brew --prefix` and `--version` block on
+    /// child processes and must never stall the main actor.
+    static func locate() async throws -> Installation {
+        try await Task.detached(priority: .userInitiated) {
+            try locateBlocking()
+        }.value
+    }
+
+    /// Synchronous probe. Call from a background context only.
+    static func locateBlocking() throws -> Installation {
         let paths = discoveryPaths(
             brewFormulaPrefix: readBrewPrefix(formula: "librespot"),
             brewRootPrefix: readBrewPrefix(formula: nil)
