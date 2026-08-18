@@ -19,8 +19,36 @@ enum NowPlayingMediaType: Equatable {
 }
 
 enum NowPlayingEligibility {
-    static func isLocalPlayback(isLocalEngineRunning: Bool, activeDeviceName: String?) -> Bool {
-        isLocalEngineRunning && activeDeviceName == LibrespotEngine.deviceName
+    /// Ownership is the exact local Connect device id, not the name "SpotifyLite".
+    static func ownsActiveDevice(activeDeviceID: String?, localDeviceID: String?) -> Bool {
+        guard let activeDeviceID, !activeDeviceID.isEmpty,
+              let localDeviceID, !localDeviceID.isEmpty else { return false }
+        return activeDeviceID == localDeviceID
+    }
+
+    static func isLocalPlayback(
+        isLocalEngineRunning: Bool,
+        activeDeviceID: String?,
+        localDeviceID: String?
+    ) -> Bool {
+        isLocalEngineRunning && ownsActiveDevice(
+            activeDeviceID: activeDeviceID,
+            localDeviceID: localDeviceID
+        )
+    }
+
+    /// 204 / no track must release the system Now Playing lock.
+    static func shouldClaimSystemNowPlaying(
+        isLocalEngineRunning: Bool,
+        activeDeviceID: String?,
+        localDeviceID: String?,
+        hasTrack: Bool
+    ) -> Bool {
+        hasTrack && isLocalPlayback(
+            isLocalEngineRunning: isLocalEngineRunning,
+            activeDeviceID: activeDeviceID,
+            localDeviceID: localDeviceID
+        )
     }
 }
 

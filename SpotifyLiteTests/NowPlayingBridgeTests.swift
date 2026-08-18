@@ -128,31 +128,68 @@ final class NowPlayingBridgeTests: XCTestCase {
         XCTAssertEqual(snapshot.elapsed, 20)
     }
 
-    func testLocalDeviceEligibilityRequiresEngineAndSpotifyLiteDevice() {
+    func testLocalDeviceEligibilityRequiresEngineAndExactDeviceID() {
         XCTAssertTrue(
             NowPlayingEligibility.isLocalPlayback(
                 isLocalEngineRunning: true,
-                activeDeviceName: LibrespotEngine.deviceName
+                activeDeviceID: "device-local",
+                localDeviceID: "device-local"
             )
         )
         XCTAssertFalse(
             NowPlayingEligibility.isLocalPlayback(
                 isLocalEngineRunning: true,
-                activeDeviceName: "iPhone"
+                activeDeviceID: "iphone",
+                localDeviceID: "device-local"
             )
         )
         XCTAssertFalse(
             NowPlayingEligibility.isLocalPlayback(
                 isLocalEngineRunning: false,
-                activeDeviceName: LibrespotEngine.deviceName
+                activeDeviceID: "device-local",
+                localDeviceID: "device-local"
             )
         )
         XCTAssertFalse(
             NowPlayingEligibility.isLocalPlayback(
                 isLocalEngineRunning: true,
-                activeDeviceName: nil
+                activeDeviceID: nil,
+                localDeviceID: "device-local"
             )
         )
+        XCTAssertFalse(
+            NowPlayingEligibility.ownsActiveDevice(
+                activeDeviceID: LibrespotEngine.deviceName,
+                localDeviceID: "device-local"
+            ),
+            "the advertised name is not ownership"
+        )
+        XCTAssertFalse(
+            NowPlayingEligibility.ownsActiveDevice(activeDeviceID: "", localDeviceID: "")
+        )
+    }
+
+    func testNoTrackReleasesSystemNowPlayingEvenWhenLocalDeviceMatches() {
+        XCTAssertFalse(
+            NowPlayingEligibility.shouldClaimSystemNowPlaying(
+                isLocalEngineRunning: true,
+                activeDeviceID: "device-local",
+                localDeviceID: "device-local",
+                hasTrack: false
+            )
+        )
+        XCTAssertTrue(
+            NowPlayingEligibility.shouldClaimSystemNowPlaying(
+                isLocalEngineRunning: true,
+                activeDeviceID: "device-local",
+                localDeviceID: "device-local",
+                hasTrack: true
+            )
+        )
+    }
+
+    func testPlayback204ClearsConfirmedDeviceID() {
+        XCTAssertNil(PlaybackActiveDevice.confirmedID(from: nil))
     }
 
     func testBridgeClaimsNowPlayingOnlyForLocalSpotifyLitePlayback() {
@@ -161,7 +198,8 @@ final class NowPlayingBridgeTests: XCTestCase {
 
         bridge.sync(
             isLocalEngineRunning: true,
-            activeDeviceName: LibrespotEngine.deviceName,
+            activeDeviceID: "local-1",
+            localDeviceID: "local-1",
             track: track,
             progressMs: 1_000,
             isPlaying: true
@@ -177,7 +215,8 @@ final class NowPlayingBridgeTests: XCTestCase {
 
         bridge.sync(
             isLocalEngineRunning: true,
-            activeDeviceName: LibrespotEngine.deviceName,
+            activeDeviceID: "local-1",
+            localDeviceID: "local-1",
             track: makeTrack(),
             progressMs: 1_000,
             isPlaying: true
@@ -186,7 +225,8 @@ final class NowPlayingBridgeTests: XCTestCase {
 
         bridge.sync(
             isLocalEngineRunning: true,
-            activeDeviceName: "iPhone",
+            activeDeviceID: "iphone-1",
+            localDeviceID: "local-1",
             track: makeTrack(),
             progressMs: 1_000,
             isPlaying: true
@@ -202,7 +242,8 @@ final class NowPlayingBridgeTests: XCTestCase {
         let (bridge, fake) = makeBridge()
         bridge.sync(
             isLocalEngineRunning: true,
-            activeDeviceName: LibrespotEngine.deviceName,
+            activeDeviceID: "local-1",
+            localDeviceID: "local-1",
             track: makeTrack(),
             progressMs: 1_000,
             isPlaying: true
@@ -210,7 +251,8 @@ final class NowPlayingBridgeTests: XCTestCase {
 
         bridge.sync(
             isLocalEngineRunning: false,
-            activeDeviceName: LibrespotEngine.deviceName,
+            activeDeviceID: "local-1",
+            localDeviceID: "local-1",
             track: makeTrack(),
             progressMs: 1_000,
             isPlaying: false
@@ -219,6 +261,48 @@ final class NowPlayingBridgeTests: XCTestCase {
         XCTAssertFalse(fake.commandsEnabled)
         XCTAssertNil(fake.currentSnapshot)
         XCTAssertGreaterThanOrEqual(fake.clearCount, 1)
+    }
+
+    func testMissingTrackReleasesNowPlayingInsteadOfKeepingStaleLock() {
+        let (bridge, fake) = makeBridge()
+        bridge.sync(
+            isLocalEngineRunning: true,
+            activeDeviceID: "local-1",
+            localDeviceID: "local-1",
+            track: makeTrack(),
+            progressMs: 1_000,
+            isPlaying: true
+        )
+        XCTAssertTrue(fake.commandsEnabled)
+
+        bridge.sync(
+            isLocalEngineRunning: true,
+            activeDeviceID: "local-1",
+            localDeviceID: "local-1",
+            track: nil,
+            progressMs: 0,
+            isPlaying: false
+        )
+
+        XCTAssertFalse(fake.commandsEnabled)
+        XCTAssertNil(fake.currentSnapshot)
+        XCTAssertGreaterThanOrEqual(fake.clearCount, 1)
+        XCTAssertEqual(fake.playbackUpdates.last?.0, .stopped)
+    }
+
+    func testNameSpotifyLiteDoesNotClaimNowPlayingWithoutMatchingDeviceID() {
+        let (bridge, fake) = makeBridge()
+        bridge.sync(
+            isLocalEngineRunning: true,
+            activeDeviceID: LibrespotEngine.deviceName,
+            localDeviceID: "real-connect-id",
+            track: makeTrack(),
+            progressMs: 1_000,
+            isPlaying: true
+        )
+
+        XCTAssertFalse(fake.commandsEnabled)
+        XCTAssertNil(fake.currentSnapshot)
     }
 
     func testBackgroundPollingContinuesOnlyWhileSpotifyLiteIsActive() {
@@ -285,7 +369,8 @@ final class NowPlayingBridgeTests: XCTestCase {
 
         bridge.sync(
             isLocalEngineRunning: true,
-            activeDeviceName: LibrespotEngine.deviceName,
+            activeDeviceID: "local-1",
+            localDeviceID: "local-1",
             track: makeTrack(),
             progressMs: 1_000,
             isPlaying: true
@@ -304,7 +389,8 @@ final class NowPlayingBridgeTests: XCTestCase {
         let (bridge, fake) = makeBridge()
         bridge.sync(
             isLocalEngineRunning: true,
-            activeDeviceName: LibrespotEngine.deviceName,
+            activeDeviceID: "local-1",
+            localDeviceID: "local-1",
             track: makeTrack(),
             progressMs: 8_000,
             isPlaying: false
@@ -324,7 +410,8 @@ final class NowPlayingBridgeTests: XCTestCase {
 
         bridge.sync(
             isLocalEngineRunning: true,
-            activeDeviceName: "iPhone",
+            activeDeviceID: "iphone-1",
+            localDeviceID: "local-1",
             track: makeTrack(),
             progressMs: 1_000,
             isPlaying: true

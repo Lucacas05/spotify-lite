@@ -198,14 +198,17 @@ final class NowPlayingBridge {
 
     func sync(
         isLocalEngineRunning: Bool,
-        activeDeviceName: String?,
+        activeDeviceID: String?,
+        localDeviceID: String?,
         track: Track?,
         progressMs: Int,
         isPlaying: Bool
     ) {
-        let eligible = NowPlayingEligibility.isLocalPlayback(
+        let eligible = NowPlayingEligibility.shouldClaimSystemNowPlaying(
             isLocalEngineRunning: isLocalEngineRunning,
-            activeDeviceName: activeDeviceName
+            activeDeviceID: activeDeviceID,
+            localDeviceID: localDeviceID,
+            hasTrack: track != nil
         )
         guard eligible else {
             clear()

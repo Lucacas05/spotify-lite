@@ -11,7 +11,8 @@ enum PlaybackPollingPolicy {
     }
 
     /// `nil` means polling should stop. Background polling continues at 30 s
-    /// only while the last confirmed active device is SpotifyLite.
+    /// only while the last confirmed active Connect **device id** is the local
+    /// librespot device. Same 5 s / 30 s playback poll; not a second Now Playing loop.
     static func intervalSeconds(
         isPlaying: Bool,
         isSceneActive: Bool,
@@ -186,7 +187,10 @@ final class PlayerStore {
     var queuePresentation: QueuePresentation { queueState.presentation }
 
     private var isSceneActive = false
-    private(set) var lastConfirmedDeviceName: String?
+    /// Connect device id of the librespot instance we launched. Ownership of
+    /// Now Playing uses this id, not the advertised name "SpotifyLite".
+    private(set) var localDeviceID: String?
+    private(set) var lastConfirmedDeviceID: String?
     private(set) var currentSpotifyUserID: String?
     private(set) var hasLocalPlaybackConsent = false
 
@@ -209,7 +213,13 @@ final class PlayerStore {
         // Surface asynchronous engine deaths (crash-restart budget exhausted)
         // as a banner; the app keeps working in remote-control mode.
         localEngine.onUnrecoverableFailure = { [weak self] message in
+            self?.forgetLocalPlaybackSession()
             self?.lastError = message
+            self?.publishNowPlaying()
+            self?.reconcilePolling()
+        }
+        localEngine.onProcessExited = { [weak self] in
+            self?.forgetLocalPlaybackSession()
             self?.publishNowPlaying()
             self?.reconcilePolling()
         }
@@ -224,7 +234,10 @@ final class PlayerStore {
     }
 
     var isLocalDeviceActive: Bool {
-        lastConfirmedDeviceName == LibrespotEngine.deviceName
+        NowPlayingEligibility.ownsActiveDevice(
+            activeDeviceID: lastConfirmedDeviceID,
+            localDeviceID: localDeviceID
+        )
     }
 
     var localPlaybackMenuTitle: String {
@@ -312,7 +325,7 @@ final class PlayerStore {
         do {
             let refreshedState: PlaybackState? = try await SpotifyClient.shared.getOptional("me/player")
             state = refreshedState
-            updateLastConfirmedDeviceName(from: refreshedState)
+            updateLastConfirmedDevice(from: refreshedState)
             let now = Date()
             progressState.applyRemoteState(
                 trackID: refreshedState?.item?.id ?? refreshedState?.item?.uri,
@@ -516,7 +529,8 @@ final class PlayerStore {
 
     /// Starts the local librespot engine only after this Spotify account has
     /// consented. Without consent, or if the binary is missing, the sheet opens
-    /// instead of launching a process.
+    /// instead of launching a process. This is the only path that starts
+    /// librespot; 404 / no-device / locator success never call it.
     func playOnThisMac() async {
         guard await resolveSpotifyAccount() else { return }
         let mayStart = LocalPlaybackStartPolicy.shouldLaunchLibrespot(
@@ -536,8 +550,8 @@ final class PlayerStore {
         reconcilePolling()
     }
 
-    /// Starts librespot (if needed) and waits until it registers as a Connect
-    /// device. Returns the device, or nil after setting `lastError`.
+    /// Called only from `playOnThisMac` after the inline opt-in gate.
+    /// Locator success does not launch.
     private func ensureLocalDevice() async -> Device? {
         cancelLocalDeviceDiscovery()
         let task = Task<Device?, Never> { await self.performLocalDeviceDiscovery() }
@@ -571,7 +585,8 @@ final class PlayerStore {
         for attempt in 0..<attempts {
             if Task.isCancelled || haltSceneNetwork { return nil }
             await loadDevices()
-            if let device = devices.first(where: { $0.name == LibrespotEngine.deviceName }) {
+            if let device = localConnectDevice(from: devices) {
+                localDeviceID = device.id
                 return device
             }
             if !localEngine.isRunning { break }
@@ -588,6 +603,7 @@ final class PlayerStore {
 
     func stopLocalPlayback() {
         localEngine.stop()
+        forgetLocalPlaybackSession()
         publishNowPlaying()
         reconcilePolling()
     }
@@ -619,7 +635,7 @@ final class PlayerStore {
         hasLocalPlaybackConsent = false
         localPlaybackSheetPresented = false
         state = nil
-        lastConfirmedDeviceName = nil
+        lastConfirmedDeviceID = nil
         lastError = nil
         nowPlaying.clear()
     }
@@ -674,21 +690,29 @@ final class PlayerStore {
     private func publishNowPlaying() {
         nowPlaying.sync(
             isLocalEngineRunning: localEngine.isRunning,
-            activeDeviceName: state?.device?.name ?? lastConfirmedDeviceName,
+            activeDeviceID: state?.device?.id ?? lastConfirmedDeviceID,
+            localDeviceID: localDeviceID,
             track: state?.item,
             progressMs: progressState.progress(at: Date()),
             isPlaying: progressState.isPlaying
         )
     }
 
-    private func updateLastConfirmedDeviceName(from refreshedState: PlaybackState?) {
-        if let name = refreshedState?.device?.name {
-            lastConfirmedDeviceName = name
-        } else if refreshedState != nil {
-            lastConfirmedDeviceName = nil
-        } else if !localEngine.isRunning {
-            lastConfirmedDeviceName = nil
+    private func updateLastConfirmedDevice(from refreshedState: PlaybackState?) {
+        lastConfirmedDeviceID = PlaybackActiveDevice.confirmedID(from: refreshedState)
+    }
+
+    private func localConnectDevice(from devices: [Device]) -> Device? {
+        devices.first { device in
+            device.name == LibrespotEngine.deviceName && !(device.id ?? "").isEmpty
         }
+    }
+
+    private func forgetLocalPlaybackSession() {
+        if lastConfirmedDeviceID == localDeviceID {
+            lastConfirmedDeviceID = nil
+        }
+        localDeviceID = nil
     }
 
     private func nextPollIntervalSeconds() -> Int? {
