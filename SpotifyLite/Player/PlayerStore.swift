@@ -749,6 +749,9 @@ final class PlayerStore {
         if error is URLError {
             return "Sin conexión a internet. Revisa tu red e inténtalo de nuevo."
         }
+        if error is LocalizedError || error is AuthError {
+            return error.localizedDescription
+        }
         return "No se pudo cargar. Inténtalo de nuevo."
     }
 }

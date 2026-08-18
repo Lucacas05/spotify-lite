@@ -73,7 +73,7 @@ enum TokenEndpoint {
     }
 
     static func isDefinitiveRefreshRejection(status: Int, data: Data) -> Bool {
-        if status == 400 || status == 401 { return true }
+        if status == 401 { return true }
         if let payload = try? JSONDecoder().decode(TokenErrorPayload.self, from: data),
            payload.error == "invalid_grant" {
             return true

@@ -68,8 +68,11 @@ final class LoopbackServer: @unchecked Sendable {
 
     func stop() {
         finish(.failure(ServerError.cancelled))
-        listener?.cancel()
+        lock.lock()
+        let activeListener = listener
         listener = nil
+        lock.unlock()
+        activeListener?.cancel()
     }
 
     private func handle(request: String, on connection: NWConnection, expectedState: String) {

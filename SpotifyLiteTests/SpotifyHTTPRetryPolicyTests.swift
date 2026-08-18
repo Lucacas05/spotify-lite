@@ -42,6 +42,8 @@ final class AuthErrorCopyTests: XCTestCase {
     func testTokenEndpointServerErrorIsNotADeadSession() {
         XCTAssertFalse(TokenEndpoint.isDefinitiveRefreshRejection(status: 500, data: Data()))
         XCTAssertFalse(TokenEndpoint.isDefinitiveRefreshRejection(status: 429, data: Data()))
+        let otherClientError = Data(#"{"error":"invalid_request"}"#.utf8)
+        XCTAssertFalse(TokenEndpoint.isDefinitiveRefreshRejection(status: 400, data: otherClientError))
         XCTAssertFalse(AuthError.tokenRequestFailed.isDefinitiveRefreshFailure)
     }
 }
