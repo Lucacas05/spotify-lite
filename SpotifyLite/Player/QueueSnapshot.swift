@@ -127,4 +127,12 @@ struct QueueRefreshState {
         isLoading = false
         inFlightGeneration = nil
     }
+
+    /// Keep the queue mirror aligned with an optimistic skip. This is not a
+    /// local queue editor: Spotify still owns order, and a failed next reverts.
+    mutating func applyOptimisticSkipForward() {
+        guard let next = upcoming.first else { return }
+        currentlyPlaying = next
+        upcoming.removeFirst()
+    }
 }

@@ -22,6 +22,17 @@ enum PlaybackMutation: Equatable {
             return false
         }
     }
+
+    /// Successful next/previous are confirmed by the mutation HTTP. A later
+    /// poll that still shows the previous track is stale, not a silent revert.
+    var ignoresStalePollAfterSuccess: Bool {
+        switch self {
+        case .skipForward, .skipBack:
+            return true
+        case .play, .setPlaying, .addToQueue, .shuffle, .setVolume, .transfer:
+            return false
+        }
+    }
 }
 
 /// Flattened playback + queue view used to decide whether Spotify has caught up.
@@ -76,8 +87,8 @@ enum PlaybackQueueSync {
     static var propagationDelay: Duration { .milliseconds(400) }
     static var retryDelay: Duration { .milliseconds(350) }
 
-    /// After a transport command succeeds, wait for the existing 5s/30s poll.
-    /// A miss still applies this payload; it must not start a new GET /me/player.
+    /// After HTTP success, the existing 5s/30s poll may catch up. A skip that
+    /// already succeeded must not be undone by a superseded GET /me/player.
     static func shouldApplyRemote(
         _ snapshot: PlaybackQueueSnapshot,
         after mutation: PlaybackMutation,
@@ -86,6 +97,9 @@ enum PlaybackQueueSync {
     ) -> Bool {
         if !isStale(snapshot, after: mutation) {
             return true
+        }
+        if mutation.ignoresStalePollAfterSuccess {
+            return false
         }
         return now >= deadline
     }
@@ -104,14 +118,9 @@ enum PlaybackQueueSync {
         case .setVolume(let percent):
             guard let actual = snapshot.volumePercent else { return false }
             return actual != percent
-        case .skipForward(let previousURI, let expectedNextURI):
-            if let expectedNextURI {
-                return snapshot.reportedPlayingURI != expectedNextURI
-            }
-            if let previousURI {
-                return snapshot.reportedPlayingURI == previousURI
-            }
-            return false
+        case .skipForward(let previousURI, _):
+            guard let previousURI else { return false }
+            return snapshot.reportedPlayingURI == previousURI
         case .skipBack(let previousURI):
             guard let previousURI else { return false }
             return snapshot.reportedPlayingURI == previousURI

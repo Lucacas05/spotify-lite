@@ -78,6 +78,7 @@ actor SpotifyClient {
 
     private func send(_ method: String, path: String, query: [String: String],
                       body: [String: Any]?, allowRetry: Bool) async throws -> Data {
+        try Task.checkCancellation()
         guard var tokens = KeychainStore.load() else { throw SpotifyAPIError.notSignedIn }
         if tokens.isExpired {
             tokens = try await refreshTokens(tokens)
@@ -96,6 +97,7 @@ actor SpotifyClient {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
 
+        try Task.checkCancellation()
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)

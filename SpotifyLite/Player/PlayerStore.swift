@@ -182,6 +182,9 @@ final class PlayerStore {
     /// runs one mutation at a time. This is the only command queue.
     private var playbackWorkItems: [PlaybackWorkItem] = []
     private var isDrainingPlaybackWork = false
+    private var inFlightPlaybackItem: PlaybackWorkItem?
+    private var inFlightPlaybackTask: Task<Void, Never>?
+    private var playbackCommandEpoch = 0
     private var remoteApplyGeneration = 0
     private var pendingPollConfirmation: PlaybackMutation?
     private var pendingPollConfirmationDeadline: Date?
@@ -307,26 +310,28 @@ final class PlayerStore {
     }
 
     func play() async {
+        let epoch = beginPlaybackCommand()
         let snapshot = capturePlaybackUI()
         applyOptimisticPlaying(true)
         await run(
             coalesceKey: .play,
             mutation: .setPlaying(true),
             confirmViaExistingPoll: true,
-            revertOptimistic: { self.restorePlaybackUI(snapshot) }
+            revertOptimistic: { self.restorePlaybackUI(snapshot, ifEpoch: epoch) }
         ) {
             try await SpotifyClient.shared.command("PUT", "me/player/play")
         }
     }
 
     func pause() async {
+        let epoch = beginPlaybackCommand()
         let snapshot = capturePlaybackUI()
         applyOptimisticPlaying(false)
         await run(
             coalesceKey: .pause,
             mutation: .setPlaying(false),
             confirmViaExistingPoll: true,
-            revertOptimistic: { self.restorePlaybackUI(snapshot) }
+            revertOptimistic: { self.restorePlaybackUI(snapshot, ifEpoch: epoch) }
         ) {
             try await SpotifyClient.shared.command("PUT", "me/player/pause")
         }
@@ -358,6 +363,7 @@ final class PlayerStore {
     func next() async {
         await submitPlaybackWork(coalesceKey: .next) {
             let snapshot = self.capturePlaybackUI()
+            let epoch = self.beginPlaybackCommand()
             let mutation = PlaybackMutation.skipForward(
                 previousURI: self.state?.item?.uri,
                 expectedNextURI: self.queue.first?.uri
@@ -366,7 +372,7 @@ final class PlayerStore {
             await self.performSerializedCommand(
                 mutation: mutation,
                 confirmViaExistingPoll: true,
-                revertOptimistic: { self.restorePlaybackUI(snapshot) }
+                revertOptimistic: { self.restorePlaybackUI(snapshot, ifEpoch: epoch) }
             ) {
                 try await SpotifyClient.shared.command("POST", "me/player/next")
             }
@@ -403,10 +409,11 @@ final class PlayerStore {
 
     func previous() async {
         // Previous delegates to Spotify. There is no local history stack (#12).
+        // Confirmation is the mutation HTTP result, not a later GET /me/player.
         await submitPlaybackWork(coalesceKey: .previous) {
             await self.performSerializedCommand(
                 mutation: .skipBack(previousURI: self.state?.item?.uri),
-                confirmViaExistingPoll: true
+                confirmViaExistingPoll: false
             ) {
                 try await SpotifyClient.shared.command("POST", "me/player/previous")
             }
@@ -414,13 +421,14 @@ final class PlayerStore {
     }
 
     func setShuffle(_ enabled: Bool) async {
+        let epoch = beginPlaybackCommand()
         let snapshot = capturePlaybackUI()
         applyOptimisticShuffle(enabled)
         await run(
             coalesceKey: .shuffle(enabled: enabled),
             mutation: .shuffle(enabled: enabled),
             confirmViaExistingPoll: true,
-            revertOptimistic: { self.restorePlaybackUI(snapshot) }
+            revertOptimistic: { self.restorePlaybackUI(snapshot, ifEpoch: epoch) }
         ) {
             try await SpotifyClient.shared.command(
                 "PUT", "me/player/shuffle", query: ["state": enabled ? "true" : "false"])
@@ -437,6 +445,7 @@ final class PlayerStore {
         guard expectedTrackID == currentTrackIdentifier else { return }
 
         let snapshot = capturePlaybackUI()
+        let epoch = beginPlaybackCommand()
         let now = Date()
         let isPlaying = progressState.isPlaying
         progressState.applyLocalSeek(
@@ -460,7 +469,7 @@ final class PlayerStore {
             coalesceKey: .seek(positionMs: normalizedPosition, expectedTrackID: expectedTrackID),
             revertOptimistic: {
                 guard requestID == self.seekRequestID else { return }
-                self.restorePlaybackUI(snapshot)
+                self.restorePlaybackUI(snapshot, ifEpoch: epoch)
             }
         ) {
             try await SpotifyClient.shared.command(
@@ -475,13 +484,13 @@ final class PlayerStore {
     func setVolume(_ percent: Int) async {
         let next = min(100, max(0, percent))
         let previous = volumePercent
+        let epoch = beginPlaybackCommand()
         volumePercent = next
         await run(
             coalesceKey: .volume(percent: next),
             revertOptimistic: {
-                if self.volumePercent == next {
-                    self.volumePercent = previous
-                }
+                guard epoch == self.playbackCommandEpoch, self.volumePercent == next else { return }
+                self.volumePercent = previous
             }
         ) {
             try await SpotifyClient.shared.command(
@@ -682,9 +691,33 @@ final class PlayerStore {
         work: @escaping () async -> Void
     ) async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            if let coalesceKey, playbackWorkItems.last?.coalesceKey == coalesceKey {
-                playbackWorkItems[playbackWorkItems.count - 1].continuations.append(continuation)
-                return
+            if let coalesceKey {
+                if let last = playbackWorkItems.last, last.coalesceKey == coalesceKey {
+                    last.continuations.append(continuation)
+                    return
+                }
+                if playbackWorkItems.isEmpty,
+                   let inFlight = inFlightPlaybackItem,
+                   inFlight.coalesceKey == coalesceKey {
+                    inFlight.continuations.append(continuation)
+                    return
+                }
+                if let last = playbackWorkItems.last,
+                   let lastKey = last.coalesceKey,
+                   coalesceKey.supersedes(lastKey) {
+                    last.coalesceKey = coalesceKey
+                    last.work = work
+                    last.continuations.append(continuation)
+                    if let inFlightKey = inFlightPlaybackItem?.coalesceKey,
+                       coalesceKey.supersedes(inFlightKey) {
+                        inFlightPlaybackTask?.cancel()
+                    }
+                    return
+                }
+                if let inFlightKey = inFlightPlaybackItem?.coalesceKey,
+                   coalesceKey.supersedes(inFlightKey) {
+                    inFlightPlaybackTask?.cancel()
+                }
             }
             playbackWorkItems.append(
                 PlaybackWorkItem(
@@ -704,10 +737,17 @@ final class PlayerStore {
         defer {
             isDrainingPlaybackWork = false
             isPlaybackCommandInFlight = false
+            inFlightPlaybackItem = nil
+            inFlightPlaybackTask = nil
         }
         while !playbackWorkItems.isEmpty {
             let item = playbackWorkItems.removeFirst()
-            await item.work()
+            inFlightPlaybackItem = item
+            let task = Task { await item.work() }
+            inFlightPlaybackTask = task
+            await task.value
+            inFlightPlaybackTask = nil
+            inFlightPlaybackItem = nil
             for continuation in item.continuations {
                 continuation.resume()
             }
@@ -722,6 +762,7 @@ final class PlayerStore {
     ) async {
         invalidateInFlightRemoteReads()
         do {
+            try Task.checkCancellation()
             try await operation()
             lastError = nil
             invalidateInFlightRemoteReads()
@@ -758,20 +799,37 @@ final class PlayerStore {
         pendingPollConfirmationDeadline = nil
     }
 
+    private func beginPlaybackCommand() -> Int {
+        playbackCommandEpoch += 1
+        return playbackCommandEpoch
+    }
+
     private struct PlaybackUISnapshot {
         var state: PlaybackState?
         var progressState: PlaybackProgressState
         var volumePercent: Int
+        var queueState: QueueRefreshState
     }
 
     private func capturePlaybackUI() -> PlaybackUISnapshot {
-        PlaybackUISnapshot(state: state, progressState: progressState, volumePercent: volumePercent)
+        PlaybackUISnapshot(
+            state: state,
+            progressState: progressState,
+            volumePercent: volumePercent,
+            queueState: queueState
+        )
+    }
+
+    private func restorePlaybackUI(_ snapshot: PlaybackUISnapshot, ifEpoch epoch: Int) {
+        guard epoch == playbackCommandEpoch else { return }
+        restorePlaybackUI(snapshot)
     }
 
     private func restorePlaybackUI(_ snapshot: PlaybackUISnapshot) {
         state = snapshot.state
         progressState = snapshot.progressState
         volumePercent = snapshot.volumePercent
+        queueState = snapshot.queueState
     }
 
     private func applyOptimisticPlaying(_ playing: Bool) {
@@ -801,23 +859,24 @@ final class PlayerStore {
             isPlaying: progressState.isPlaying,
             receivedAt: Date()
         )
+        queueState.applyOptimisticSkipForward()
         publishNowPlaying()
     }
 
-    private enum PlaybackCommand: Equatable {
-        case play
-        case pause
-        case next
-        case previous
-        case seek(positionMs: Int, expectedTrackID: String?)
-        case volume(percent: Int)
-        case shuffle(enabled: Bool)
-    }
-
-    private struct PlaybackWorkItem {
-        let coalesceKey: PlaybackCommand?
+    private final class PlaybackWorkItem {
+        var coalesceKey: PlaybackCommand?
         var continuations: [CheckedContinuation<Void, Never>]
-        let work: () async -> Void
+        var work: () async -> Void
+
+        init(
+            coalesceKey: PlaybackCommand?,
+            continuations: [CheckedContinuation<Void, Never>],
+            work: @escaping () async -> Void
+        ) {
+            self.coalesceKey = coalesceKey
+            self.continuations = continuations
+            self.work = work
+        }
     }
 
     private func synchronizePlaybackAndQueue(after mutation: PlaybackMutation) async {
@@ -882,5 +941,29 @@ final class PlayerStore {
             return "No connection to Spotify. Check your internet connection."
         }
         return error.localizedDescription
+    }
+}
+
+enum PlaybackCommand: Equatable {
+    case play
+    case pause
+    case next
+    case previous
+    case seek(positionMs: Int, expectedTrackID: String?)
+    case volume(percent: Int)
+    case shuffle(enabled: Bool)
+
+    /// A newer command replaces an in-flight POST instead of waiting for it.
+    func supersedes(_ inFlight: PlaybackCommand) -> Bool {
+        switch (inFlight, self) {
+        case (.seek, .seek), (.volume, .volume), (.shuffle, .shuffle):
+            return true
+        case (.play, .pause), (.pause, .play):
+            return true
+        case (.next, .previous), (.previous, .next):
+            return true
+        default:
+            return false
+        }
     }
 }
