@@ -60,11 +60,11 @@ final class LibrespotEngine {
         cancelPendingRestart()
         restartAttempts = 0
         isNotInstalled = false
+        await reapStaleInstances()
         guard accountUserID != nil else {
             status = .failed(LibrespotAccountCacheError.missingSpotifyAccount.localizedDescription)
             return
         }
-        await reapStaleInstances()
         status = .starting
         do {
             let installation = try LibrespotLocator.locate()
