@@ -1,13 +1,6 @@
 import Foundation
 import Observation
 
-/// Wraps a local-engine failure so it survives `run`'s error handling with the
-/// specific cause instead of the generic "no active device" message.
-struct LocalPlaybackError: LocalizedError {
-    let message: String
-    var errorDescription: String? { message }
-}
-
 enum PlaybackPollingPolicy {
     static let foregroundPlayingIntervalSeconds = 5
     static let foregroundIdleIntervalSeconds = 30
@@ -186,7 +179,10 @@ final class PlayerStore {
     var queuePresentation: QueuePresentation { queueState.presentation }
 
     private var isSceneActive = false
-    private(set) var lastConfirmedDeviceName: String?
+    /// Connect device id of the librespot instance we launched. Ownership of
+    /// Now Playing uses this id, not the advertised name "SpotifyLite".
+    private(set) var localDeviceID: String?
+    private(set) var lastConfirmedDeviceID: String?
 
     init(nowPlaying: NowPlayingBridge? = nil) {
         self.nowPlaying = nowPlaying ?? NowPlayingBridge()
@@ -196,9 +192,13 @@ final class PlayerStore {
         // Surface asynchronous engine deaths (crash-restart budget exhausted)
         // as a banner; the app keeps working in remote-control mode.
         localEngine.onUnrecoverableFailure = { [weak self] message in
+            self?.forgetLocalPlaybackSession()
             self?.lastError = message
             self?.publishNowPlaying()
             self?.reconcilePolling()
+        }
+        localEngine.onBecameRunning = { [weak self] in
+            Task { await self?.handleEngineBecameRunning() }
         }
     }
 
@@ -211,7 +211,10 @@ final class PlayerStore {
     }
 
     var isLocalDeviceActive: Bool {
-        lastConfirmedDeviceName == LibrespotEngine.deviceName
+        NowPlayingEligibility.ownsActiveDevice(
+            activeDeviceID: lastConfirmedDeviceID,
+            localDeviceID: localDeviceID
+        )
     }
 
     func setSceneActive(_ active: Bool) {
@@ -253,7 +256,7 @@ final class PlayerStore {
         do {
             let refreshedState: PlaybackState? = try await SpotifyClient.shared.getOptional("me/player")
             state = refreshedState
-            updateLastConfirmedDeviceName(from: refreshedState)
+            updateLastConfirmedDevice(from: refreshedState)
             let now = Date()
             progressState.applyRemoteState(
                 trackID: refreshedState?.item?.id ?? refreshedState?.item?.uri,
@@ -465,7 +468,8 @@ final class PlayerStore {
         let attempts = localEngine.needsAuthorization ? 60 : 10
         for attempt in 0..<attempts {
             await loadDevices()
-            if let device = devices.first(where: { $0.name == LibrespotEngine.deviceName }) {
+            if let device = localConnectDevice(from: devices) {
+                localDeviceID = device.id
                 return device
             }
             if !localEngine.isRunning { break }
@@ -481,6 +485,7 @@ final class PlayerStore {
 
     func stopLocalPlayback() {
         localEngine.stop()
+        forgetLocalPlaybackSession()
         publishNowPlaying()
         reconcilePolling()
     }
@@ -498,7 +503,6 @@ final class PlayerStore {
         stopLocalPlayback()
         stopPolling()
         state = nil
-        lastConfirmedDeviceName = nil
         nowPlaying.clear()
     }
 
@@ -527,24 +531,8 @@ final class PlayerStore {
         }
         let expectedURI = trackURI ?? uris?.first
         await run(mutation: .play(expectedURI: expectedURI)) {
-            do {
-                try await SpotifyClient.shared.command("PUT", "me/player/play", body: body.isEmpty ? nil : body)
-            } catch let error as SpotifyAPIError where error.isNoActiveDevice {
-                // No active Connect device anywhere: fall back to the local
-                // librespot engine and target it explicitly.
-                guard let device = await ensureLocalDevice(), let deviceID = device.id else {
-                    // The setup sheet is already telling the user what to do;
-                    // a red banner on top would be noise.
-                    if localSetupNeeded { return }
-                    // ensureLocalDevice already set lastError to the real cause;
-                    // rethrowing the 404 would mask it behind the generic message.
-                    throw LocalPlaybackError(message: lastError ?? error.localizedDescription)
-                }
-                try await SpotifyClient.shared.command(
-                    "PUT", "me/player/play",
-                    query: ["device_id": deviceID],
-                    body: body.isEmpty ? nil : body)
-            }
+            // Honor #16 / map #1: a 404 / no active device never starts librespot.
+            try await SpotifyClient.shared.command("PUT", "me/player/play", body: body.isEmpty ? nil : body)
         }
     }
 
@@ -555,20 +543,53 @@ final class PlayerStore {
     private func publishNowPlaying() {
         nowPlaying.sync(
             isLocalEngineRunning: localEngine.isRunning,
-            activeDeviceName: state?.device?.name ?? lastConfirmedDeviceName,
+            activeDeviceID: state?.device?.id ?? lastConfirmedDeviceID,
+            localDeviceID: localDeviceID,
             track: state?.item,
             progressMs: progressState.progress(at: Date()),
             isPlaying: progressState.isPlaying
         )
     }
 
-    private func updateLastConfirmedDeviceName(from refreshedState: PlaybackState?) {
-        if let name = refreshedState?.device?.name {
-            lastConfirmedDeviceName = name
-        } else if refreshedState != nil {
-            lastConfirmedDeviceName = nil
-        } else if !localEngine.isRunning {
-            lastConfirmedDeviceName = nil
+    private func updateLastConfirmedDevice(from refreshedState: PlaybackState?) {
+        lastConfirmedDeviceID = PlaybackActiveDevice.confirmedID(from: refreshedState)
+    }
+
+    private func localConnectDevice(from devices: [Device]) -> Device? {
+        devices.first { device in
+            device.name == LibrespotEngine.deviceName && !(device.id ?? "").isEmpty
+        }
+    }
+
+    private func forgetLocalPlaybackSession() {
+        if lastConfirmedDeviceID == localDeviceID {
+            lastConfirmedDeviceID = nil
+        }
+        localDeviceID = nil
+    }
+
+    /// After a crash relaunch the Connect device id may change. Recapture it
+    /// and retarget playback so the session continues. First start leaves
+    /// capture to `ensureLocalDevice`.
+    private func handleEngineBecameRunning() async {
+        let previousID = localDeviceID
+        guard previousID != nil else { return }
+        localDeviceID = nil
+        publishNowPlaying()
+        let attempts = localEngine.needsAuthorization ? 60 : 10
+        for attempt in 0..<attempts {
+            await loadDevices()
+            if let device = localConnectDevice(from: devices) {
+                localDeviceID = device.id
+                if device.id != previousID {
+                    await transferPlayback(to: device)
+                }
+                publishNowPlaying()
+                reconcilePolling()
+                return
+            }
+            if !localEngine.isRunning { return }
+            try? await Task.sleep(for: .seconds(attempt == 0 ? 1.5 : 1))
         }
     }
 

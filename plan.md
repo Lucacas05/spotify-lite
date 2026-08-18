@@ -145,20 +145,22 @@ Before preparing the DMG, a technical beta that can be run from the repository c
 Experimental: the user installs librespot themselves (brew); the app never embeds it.
 
 > **Decisions updated during implementation (Aug 2026):**
-> - **No Settings toggle.** Local playback works out of the box: "Play on this Mac" in the device picker, plus an automatic fallback when play is pressed with no active Connect device anywhere. The experimental/unofficial warning lives in the one-time setup sheet instead of a Settings opt-in.
+> - **No Settings toggle.** Local playback is started from "Play on this Mac" in the device picker. The experimental/unofficial warning lives in the one-time setup sheet. Honor #16 / map #1: a 404 / missing Connect device **never** auto-starts librespot.
 > - **Auth is librespot's own OAuth, not the app's PKCE token.** Tokens issued to a custom client ID pass the classic session login but are then denied by login5 with `INVALID_CREDENTIALS` when spirc registers the Connect device. `--enable-oauth` (librespot's own client ID) is used for a one-time browser approval; reusable credentials land in the system cache and later launches log in silently. If Spotify rejects the cached credentials, they are reset automatically and the next start re-authorizes.
-> - **Locator probes fixed install paths** (`/opt/homebrew/opt/librespot/bin`, `/usr/local/opt/…`, plus `bin/` fallbacks) instead of shelling out to `brew --prefix`: simpler, no brew dependency at runtime, same coverage.
+> - **Locator:** `brew --prefix` / `brew --prefix librespot` (absolute brew path, no GUI PATH) plus the fixed `opt`/`bin` fallbacks. First executable that runs and meets 0.8.0 wins; unknown version warns and proceeds; too-old candidates are skipped.
+> - **Supervisor (#17):** `start()` is single-flight (concurrent callers share one start; never two librespot processes). Crash/nonzero restarts with backoff 1 s/2 s/4 s (budget resets after 60 s healthy). Then degrade to remote control + banner with Retry — do not leave `.failed` with no fallback. No `--onevent` bridge in 0.2.
+> - **Now Playing ownership** is the exact local Connect **device id**, not the name `"SpotifyLite"`. 204 / no track releases the system lock.
 
-- [x] `LibrespotLocator`: detect the install without depending on the shell PATH by probing the stable Homebrew `opt` prefixes (Apple Silicon and Intel) and `bin` fallbacks.
-- [x] Validate version with `librespot --version`: block if < 0.8.0 (message "update with `brew upgrade librespot`"); newer or unparseable versions proceed and are logged.
+- [x] `LibrespotLocator`: `brew --prefix` plus fixed Homebrew `opt`/`bin` paths; first runnable binary meeting 0.8.0; unknown version warns instead of blocking.
+- [x] Validate version with `librespot --version`: skip candidates < 0.8.0 (message "update with `brew upgrade librespot`" if none remain); newer or unparseable versions proceed and are logged.
 - [x] Setup sheet when librespot is missing: copyable `brew install librespot`, experimental/ToS/Premium warning, and a "Check again" button. The app does not run brew.
 - [x] `LibrespotEngine`: launch the external binary with `Process`:
-  - `librespot --name "SpotifyLite" --backend rodio --zeroconf-backend dns-sd --device-type computer --bitrate 320 --system-cache <Application Support>/SpotifyLite/librespot` (plus `--enable-oauth` on first run only).
+  - `librespot --name "SpotifyLite" --backend rodio --zeroconf-backend dns-sd --device-type computer --bitrate 320 --system-cache <Application Support>/SpotifyLite/librespot` (plus `--enable-oauth` on first run only). No `--onevent`.
   - Lifetime wrapper (`LibrespotProcessLifetime`): a bash trap tied to a stdin pipe kills librespot if the app dies for any reason (crash, SIGKILL, Xcode stop); stale orphans are reaped before every start.
-  - Supervision: if the process dies unexpectedly, restart with backoff (3 attempts: 1 s/2 s/4 s; the budget resets after 60 s of healthy uptime); if it keeps failing, fall back to remote-control mode with a banner and a "Retry" button. stderr is logged to Application Support (no tokens).
-- [x] On activation, transfer playback to the "SpotifyLite" device (`PUT /me/player` with its device id), waiting for the Connect registration to appear.
+  - Supervision: `start()` is single-flight. If the process dies with a crash/nonzero status, restart with backoff (3 attempts: 1 s/2 s/4 s; the budget resets after 60 s of healthy uptime); if it keeps failing, fall back to remote-control mode with a banner and a "Retry" button. stderr is logged to Application Support (no tokens).
+- [x] On activation, transfer playback to the registered Connect device (`PUT /me/player` with its **device id**), waiting for the Connect registration to appear. The name `"SpotifyLite"` is only how we discover that id.
 - [x] Playback state: reuse Phase 2 polling (the `--onevent` event bridge remains a future improvement).
-- [x] `NowPlayingBridge`: `MPNowPlayingInfoCenter` (title, artist, artwork, position) + `MPRemoteCommandCenter` (keyboard media keys, AirPods).
+- [x] `NowPlayingBridge`: `MPNowPlayingInfoCenter` (title, artist, artwork, position) + `MPRemoteCommandCenter` (keyboard media keys, AirPods). Claim only while the active device id equals the local id; 204 / no track releases the system Now Playing lock.
 
 **Exit criterion:** with librespot installed, the app plays audio itself, responds to media keys, and appears in the macOS Now Playing widget; without librespot, the app remains complete in remote-control mode and offers the setup sheet.
 
