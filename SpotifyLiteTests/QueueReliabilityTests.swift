@@ -144,6 +144,36 @@ final class QueueReliabilityTests: XCTestCase {
         XCTAssertEqual(PlaybackQueueSync.maxAttempts, 3)
     }
 
+    func testSetPlayingTreatsAMissingPlayerPayloadAsNotPlaying() {
+        XCTAssertTrue(
+            PlaybackQueueSync.isStale(PlaybackQueueSnapshot(), after: .setPlaying(true))
+        )
+        XCTAssertFalse(
+            PlaybackQueueSync.isStale(
+                PlaybackQueueSnapshot(isPlaying: true),
+                after: .setPlaying(true)
+            )
+        )
+    }
+
+    func testExistingPollAppliesWhenConfirmedOrWhenTheDeadlineMisses() {
+        let mutation = PlaybackMutation.setPlaying(true)
+        let stale = PlaybackQueueSnapshot(isPlaying: false)
+        let confirmed = PlaybackQueueSnapshot(isPlaying: true)
+        let now = Date(timeIntervalSince1970: 1_000)
+        let deadline = PlaybackQueueSync.confirmationDeadline(now: now, pollIntervalSeconds: 5)
+
+        XCTAssertFalse(
+            PlaybackQueueSync.shouldApplyRemote(stale, after: mutation, now: now, deadline: deadline)
+        )
+        XCTAssertTrue(
+            PlaybackQueueSync.shouldApplyRemote(confirmed, after: mutation, now: now, deadline: deadline)
+        )
+        XCTAssertTrue(
+            PlaybackQueueSync.shouldApplyRemote(stale, after: mutation, now: deadline, deadline: deadline)
+        )
+    }
+
     func testSkipIsStaleUntilCurrentlyPlayingChanges() {
         let skip = PlaybackMutation.skipForward(
             previousURI: "spotify:track:one",

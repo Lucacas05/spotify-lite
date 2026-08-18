@@ -178,6 +178,8 @@ final class PlayerStore {
     private var queueState = QueueRefreshState()
     private var queueLoadTask: Task<Void, Never>?
     private var playbackSyncTask: Task<Void, Never>?
+    /// Serial playback command queue. Identical pending items coalesce; drain
+    /// runs one mutation at a time. This is the only command queue.
     private var playbackWorkItems: [PlaybackWorkItem] = []
     private var isDrainingPlaybackWork = false
     private var remoteApplyGeneration = 0
@@ -271,7 +273,7 @@ final class PlayerStore {
                     currentlyPlaying: queueState.currentlyPlaying,
                     upcoming: queueState.upcoming
                 )
-                if !PlaybackPollConfirmation.shouldApplyRemote(
+                if !PlaybackQueueSync.shouldApplyRemote(
                     snapshot, after: mutation, now: Date(), deadline: deadline
                 ) {
                     return
@@ -659,7 +661,7 @@ final class PlayerStore {
     }
 
     private func run(
-        coalesceKey: PlaybackCommandQueue.Command? = nil,
+        coalesceKey: PlaybackCommand? = nil,
         mutation: PlaybackMutation? = nil,
         confirmViaExistingPoll: Bool = false,
         revertOptimistic: (() -> Void)? = nil,
@@ -676,7 +678,7 @@ final class PlayerStore {
     }
 
     private func submitPlaybackWork(
-        coalesceKey: PlaybackCommandQueue.Command?,
+        coalesceKey: PlaybackCommand?,
         work: @escaping () async -> Void
     ) async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -727,7 +729,7 @@ final class PlayerStore {
                 pendingPollConfirmation = mutation
                 let interval = nextPollIntervalSeconds()
                     ?? PlaybackPollingPolicy.foregroundIdleIntervalSeconds
-                pendingPollConfirmationDeadline = PlaybackPollConfirmation.deadline(
+                pendingPollConfirmationDeadline = PlaybackQueueSync.confirmationDeadline(
                     now: Date(),
                     pollIntervalSeconds: interval
                 )
@@ -802,8 +804,18 @@ final class PlayerStore {
         publishNowPlaying()
     }
 
+    private enum PlaybackCommand: Equatable {
+        case play
+        case pause
+        case next
+        case previous
+        case seek(positionMs: Int, expectedTrackID: String?)
+        case volume(percent: Int)
+        case shuffle(enabled: Bool)
+    }
+
     private struct PlaybackWorkItem {
-        let coalesceKey: PlaybackCommandQueue.Command?
+        let coalesceKey: PlaybackCommand?
         var continuations: [CheckedContinuation<Void, Never>]
         let work: () async -> Void
     }

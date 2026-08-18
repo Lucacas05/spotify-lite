@@ -76,6 +76,24 @@ enum PlaybackQueueSync {
     static var propagationDelay: Duration { .milliseconds(400) }
     static var retryDelay: Duration { .milliseconds(350) }
 
+    /// After a transport command succeeds, wait for the existing 5s/30s poll.
+    /// A miss still applies this payload; it must not start a new GET /me/player.
+    static func shouldApplyRemote(
+        _ snapshot: PlaybackQueueSnapshot,
+        after mutation: PlaybackMutation,
+        now: Date,
+        deadline: Date
+    ) -> Bool {
+        if !isStale(snapshot, after: mutation) {
+            return true
+        }
+        return now >= deadline
+    }
+
+    static func confirmationDeadline(now: Date, pollIntervalSeconds: Int) -> Date {
+        now.addingTimeInterval(TimeInterval(max(pollIntervalSeconds, 0)))
+    }
+
     static func isStale(_ snapshot: PlaybackQueueSnapshot, after mutation: PlaybackMutation) -> Bool {
         switch mutation {
         case .play(let expectedURI):
