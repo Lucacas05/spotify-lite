@@ -11,9 +11,9 @@ final class PKCETests: XCTestCase {
         )
     }
 
-    func testGeneratedVerifierIsURLSafeAndHasEnoughEntropy() {
-        let first = PKCE.generateVerifier()
-        let second = PKCE.generateVerifier()
+    func testGeneratedVerifierIsURLSafeAndHasEnoughEntropy() throws {
+        let first = try PKCE.generateVerifier()
+        let second = try PKCE.generateVerifier()
 
         XCTAssertEqual(first.count, 86)
         XCTAssertNotEqual(first, second)

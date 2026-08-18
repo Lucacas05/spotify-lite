@@ -4,18 +4,25 @@ import Network
 /// Mini HTTP server on 127.0.0.1 that waits for Spotify's redirect with the
 /// authorization code, responds with a "return to the app" page, and shuts down.
 final class LoopbackServer: @unchecked Sendable {
-    enum ServerError: Error {
+    enum ServerError: Error, Equatable {
         case portInUse
         case userDenied
         case badCallback
         case stateMismatch
+        case cancelled
     }
 
     private var listener: NWListener?
     private let lock = NSLock()
     private var continuation: CheckedContinuation<String, Error>?
+    private var isStopped = false
 
     func waitForCode(port: UInt16, expectedState: String) async throws -> String {
+        lock.lock()
+        let alreadyStopped = isStopped
+        lock.unlock()
+        if alreadyStopped { throw ServerError.cancelled }
+
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1",
                                                            port: NWEndpoint.Port(rawValue: port)!)
@@ -28,27 +35,39 @@ final class LoopbackServer: @unchecked Sendable {
         self.listener = listener
 
         defer { stop() }
-        return try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
-            listener.stateUpdateHandler = { [weak self] state in
-                if case .failed = state { self?.finish(.failure(ServerError.portInUse)) }
-            }
-            listener.newConnectionHandler = { [weak self] connection in
-                connection.start(queue: .main)
-                connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, _, _ in
-                    guard let self, let data,
-                          let request = String(data: data, encoding: .utf8) else {
-                        connection.cancel()
-                        return
-                    }
-                    self.handle(request: request, on: connection, expectedState: expectedState)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                self.lock.lock()
+                if self.isStopped {
+                    self.lock.unlock()
+                    continuation.resume(throwing: ServerError.cancelled)
+                    return
                 }
+                self.continuation = continuation
+                self.lock.unlock()
+                listener.stateUpdateHandler = { [weak self] state in
+                    if case .failed = state { self?.finish(.failure(ServerError.portInUse)) }
+                }
+                listener.newConnectionHandler = { [weak self] connection in
+                    connection.start(queue: .main)
+                    connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, _, _ in
+                        guard let self, let data,
+                              let request = String(data: data, encoding: .utf8) else {
+                            connection.cancel()
+                            return
+                        }
+                        self.handle(request: request, on: connection, expectedState: expectedState)
+                    }
+                }
+                listener.start(queue: .main)
             }
-            listener.start(queue: .main)
+        } onCancel: {
+            self.stop()
         }
     }
 
     func stop() {
+        finish(.failure(ServerError.cancelled))
         listener?.cancel()
         listener = nil
     }
@@ -93,6 +112,7 @@ final class LoopbackServer: @unchecked Sendable {
 
     private func finish(_ result: Result<String, Error>) {
         lock.lock()
+        isStopped = true
         let continuation = self.continuation
         self.continuation = nil
         lock.unlock()
