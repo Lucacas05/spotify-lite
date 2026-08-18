@@ -65,6 +65,8 @@ struct CheatsheetView: View {
         var result: [(KeyboardAction, [KeyChord])] = []
         for pair in KeyMap.bindings {
             guard pair.action.cheatsheetGroup == group else { continue }
+            // Hidden on purpose: Backspace "Remove from queue" is inert (#12 /
+            // map #11 / docs/HANDOFF-queue-reliability.md).
             guard pair.action != .deleteItem else { continue }
             guard seen.insert(pair.action).inserted else { continue }
             let chords = KeyMap.chords(for: pair.action).filter { $0.key != "=" }

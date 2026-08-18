@@ -23,7 +23,7 @@ struct MenuBarPlayerView: View {
                         Image(systemName: "backward.fill")
                     }
                     Button { Task { await player.togglePlayPause() } } label: {
-                        Image(systemName: (player.state?.isPlaying ?? false) ? "pause.fill" : "play.fill")
+                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     }
                     Button { Task { await player.next() } } label: {
                         Image(systemName: "forward.fill")

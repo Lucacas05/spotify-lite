@@ -110,9 +110,9 @@ final class QueueReliabilityTests: XCTestCase {
 
         XCTAssertTrue(play.requiresPlaybackAndQueueSync)
         XCTAssertTrue(playNext.requiresPlaybackAndQueueSync)
-        XCTAssertTrue(PlaybackMutation.skipForward(previousURI: "a", expectedNextURI: "b")
+        XCTAssertFalse(PlaybackMutation.skipForward(previousURI: "a", expectedNextURI: "b")
             .requiresPlaybackAndQueueSync)
-        XCTAssertTrue(PlaybackMutation.shuffle(enabled: true).requiresPlaybackAndQueueSync)
+        XCTAssertFalse(PlaybackMutation.shuffle(enabled: true).requiresPlaybackAndQueueSync)
         XCTAssertTrue(PlaybackMutation.transfer(deviceID: "device-1").requiresPlaybackAndQueueSync)
     }
 

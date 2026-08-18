@@ -3,18 +3,32 @@ import Foundation
 /// Commands that can change Spotify's reported queue or currently-playing item.
 enum PlaybackMutation: Equatable {
     case play(expectedURI: String?)
+    case setPlaying(Bool)
     case skipForward(previousURI: String?, expectedNextURI: String?)
     case skipBack(previousURI: String?)
     case addToQueue(uri: String, previousMatchingCount: Int)
     case shuffle(enabled: Bool)
+    case setVolume(percent: Int)
     case transfer(deviceID: String)
 
-    var requiresPlaybackAndQueueSync: Bool { true }
+    /// Queue-changing intents that still use the #11 playback/queue coordinator.
+    /// Transport commands (play/pause/next/previous/seek/volume/shuffle) confirm
+    /// from HTTP and wait for the existing poll instead.
+    var requiresPlaybackAndQueueSync: Bool {
+        switch self {
+        case .addToQueue, .play, .transfer:
+            return true
+        case .setPlaying, .skipForward, .skipBack, .shuffle, .setVolume:
+            return false
+        }
+    }
 }
 
 /// Flattened playback + queue view used to decide whether Spotify has caught up.
 struct PlaybackQueueSnapshot: Equatable {
     var playingURI: String?
+    var isPlaying: Bool?
+    var volumePercent: Int?
     var shuffleState: Bool?
     var deviceID: String?
     var currentlyPlayingURI: String?
@@ -22,12 +36,16 @@ struct PlaybackQueueSnapshot: Equatable {
 
     init(
         playingURI: String? = nil,
+        isPlaying: Bool? = nil,
+        volumePercent: Int? = nil,
         shuffleState: Bool? = nil,
         deviceID: String? = nil,
         currentlyPlayingURI: String? = nil,
         upcomingURIs: [String] = []
     ) {
         self.playingURI = playingURI
+        self.isPlaying = isPlaying
+        self.volumePercent = volumePercent
         self.shuffleState = shuffleState
         self.deviceID = deviceID
         self.currentlyPlayingURI = currentlyPlayingURI
@@ -37,6 +55,8 @@ struct PlaybackQueueSnapshot: Equatable {
     init(playback: PlaybackState?, currentlyPlaying: Track?, upcoming: [Track]) {
         self.init(
             playingURI: playback?.item?.uri,
+            isPlaying: playback?.isPlaying,
+            volumePercent: playback?.device?.volumePercent,
             shuffleState: playback?.shuffleState,
             deviceID: playback?.device?.id,
             currentlyPlayingURI: currentlyPlaying?.uri,
@@ -61,6 +81,11 @@ enum PlaybackQueueSync {
         case .play(let expectedURI):
             guard let expectedURI else { return false }
             return snapshot.reportedPlayingURI != expectedURI
+        case .setPlaying(let expected):
+            return (snapshot.isPlaying ?? false) != expected
+        case .setVolume(let percent):
+            guard let actual = snapshot.volumePercent else { return false }
+            return actual != percent
         case .skipForward(let previousURI, let expectedNextURI):
             if let expectedNextURI {
                 return snapshot.reportedPlayingURI != expectedNextURI

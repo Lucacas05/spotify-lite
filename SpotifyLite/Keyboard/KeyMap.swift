@@ -92,6 +92,9 @@ enum KeyMap {
         (.moveRight, KeyChord(key: "ArrowRight")),
         (.activate, KeyChord(key: "Enter")),
         (.cancel, KeyChord(key: "Escape")),
+        // Backspace stays bound so the key is consumed, but the action is inert.
+        // Queue is a read-only Spotify mirror this version (#12 / map #11 /
+        // docs/HANDOFF-queue-reliability.md). Do not build a local queue editor.
         (.deleteItem, KeyChord(key: "Backspace")),
     ]
 

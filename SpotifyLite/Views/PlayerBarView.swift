@@ -78,7 +78,7 @@ struct PlayerBarView: View {
             .keyboardNavigable(focus: .player(.previous), handleActivate: false)
 
             Button { Task { await player.togglePlayPause() } } label: {
-                Image(systemName: (player.state?.isPlaying ?? false) ? "pause.fill" : "play.fill")
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(Color(nsColor: .windowBackgroundColor))
                     .frame(width: 32, height: 32)
@@ -114,7 +114,7 @@ private struct PlaybackScrubber: View {
 
     private var usesTimedScrubber: Bool {
         PlaybackScrubberTimeline.usesTimedScrubber(
-            isPlaying: player.state?.isPlaying ?? false,
+            isPlaying: player.isPlaying,
             durationMs: player.state?.item?.durationMs ?? 0,
             isScrubbing: isScrubbing
         )

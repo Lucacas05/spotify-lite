@@ -266,6 +266,17 @@ final class KeyboardNavigationTests: XCTestCase {
         XCTAssertEqual(state.queueIndex, 1)
     }
 
+    func testBackspaceRemoveFromQueueIsInert() {
+        var state = NavigationState(zone: .queue)
+        state.queueOpen = true
+        state.queueIndex = 0
+        XCTAssertEqual(KeyMap.action(for: NavigationKey(name: "Backspace")), .deleteItem)
+        XCTAssertEqual(apply(NavigationKey(name: "Backspace"), to: &state), .none)
+        XCTAssertEqual(state.zone, .queue)
+        XCTAssertEqual(state.queueIndex, 0)
+        XCTAssertTrue(state.queueOpen)
+    }
+
     func testPrototypeBasicFlow() {
         var state = NavigationState()
         _ = apply(.char("1"), to: &state)

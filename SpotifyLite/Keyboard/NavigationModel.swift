@@ -317,6 +317,10 @@ enum NavigationModel {
             return finish()
 
         case .deleteItem:
+            // Queue is a read-only Spotify mirror this version (issue #12 / map #11 /
+            // docs/HANDOFF-queue-reliability.md). Backspace "Remove from queue" stays
+            // unimplemented: the Web API cannot delete an existing queue item, and
+            // this app does not own a local queue editor.
             return finish()
         }
     }

@@ -107,6 +107,39 @@ struct PlaybackState: Decodable {
     let shuffleState: Bool?
     let context: PlaybackContext?
 
+    init(
+        device: Device? = nil,
+        isPlaying: Bool,
+        progressMs: Int? = nil,
+        item: Track? = nil,
+        shuffleState: Bool? = nil,
+        context: PlaybackContext? = nil
+    ) {
+        self.device = device
+        self.isPlaying = isPlaying
+        self.progressMs = progressMs
+        self.item = item
+        self.shuffleState = shuffleState
+        self.context = context
+    }
+
+    func applying(
+        isPlaying: Bool? = nil,
+        item: Track? = nil,
+        replaceItem: Bool = false,
+        progressMs: Int? = nil,
+        shuffleState: Bool? = nil
+    ) -> PlaybackState {
+        PlaybackState(
+            device: device,
+            isPlaying: isPlaying ?? self.isPlaying,
+            progressMs: progressMs ?? self.progressMs,
+            item: replaceItem ? item : (item ?? self.item),
+            shuffleState: shuffleState ?? self.shuffleState,
+            context: context
+        )
+    }
+
     func isPlayingPlaylist(id: String) -> Bool {
         context?.uri == "spotify:playlist:\(id)"
     }
