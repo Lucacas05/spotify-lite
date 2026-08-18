@@ -17,7 +17,7 @@ A native Spotify client for macOS, built with SwiftUI, that uses few resources (
 | UI | Pure SwiftUI | Native, lightweight, no Electron/Qt |
 | Auth | OAuth 2.0 Authorization Code + PKCE with browser + local loopback server | Login on Spotify's official page; loopback (`http://127.0.0.1`) is the only form documented as safe for desktop since 2025, with no client secret |
 | Metadata / playlists / search | Spotify Web API with `URLSession` + `Codable` | No external dependencies |
-| Playback | Remote control via Web API by default; **external** librespot (installed by the user with brew), opt-in and experimental | Spotify does not offer a desktop playback SDK; not embedding librespot keeps the published app 100% official API |
+| Playback | Remote control via Web API by default; **external** librespot (installed by the user with brew), experimental | Spotify does not offer a desktop playback SDK; not embedding librespot keeps the published app 100% official API |
 | Tokens | Keychain | Never in UserDefaults or on plain disk |
 | Dependencies | Zero third-party Swift packages | Smaller surface, smaller footprint |
 
@@ -142,21 +142,25 @@ Before preparing the DMG, a technical beta that can be run from the repository c
 
 ### Phase 4 — Local playback with external librespot (2–3 days, post-release)
 
-Opt-in and experimental: the user installs librespot themselves (brew); the app never embeds it.
+Experimental: the user installs librespot themselves (brew); the app never embeds it.
 
-- [ ] `LibrespotLocator`: detect the install without depending on the shell PATH — look for `brew` (fallback `/opt/homebrew/bin/brew`, `/usr/local/bin/brew`), resolve `brew --prefix librespot`, verify that `<prefix>/bin/librespot` exists and is executable.
-- [ ] Validate version with `librespot --version`: block if < 0.8.0 (message "update with `brew upgrade librespot`"); only warn if it is newer or unparseable.
-- [ ] Opt-in in Settings: "Local playback (experimental)" toggle with a clear warning (unofficial client, theoretical ban risk, Premium required).
-- [ ] Discovery: the device picker shows "This Mac (set up…)" when the mode is off; opens a sheet with instructions (copyable `brew install librespot` + "Check again" button). The app does not run brew.
-- [ ] `LibrespotProcess`: launch the external binary with `Process`:
-  - `librespot --name "SpotifyLite" --backend rodio --zeroconf-backend dns-sd --system-cache <Application Support>/SpotifyLite/librespot`.
-  - Auth: reuse the app's PKCE token (`streaming` scope) via `LIBRESPOT_ACCESS_TOKEN` in the process environment; `--enable-oauth` only as a diagnostic fallback.
-  - Supervision: if the process dies, restart with backoff (3 attempts: 1 s/2 s/4 s); if it keeps failing, fall back to remote-control mode with a banner and a "Retry" button. Log to a file in Application Support (no tokens).
-- [ ] On activation, transfer playback to the "SpotifyLite" device (`PUT /me/player` with its device id).
+> **Decisions updated during implementation (Aug 2026):**
+> - **No Settings toggle.** Local playback works out of the box: "Play on this Mac" in the device picker, plus an automatic fallback when play is pressed with no active Connect device anywhere. The experimental/unofficial warning lives in the one-time setup sheet instead of a Settings opt-in.
+> - **Auth is librespot's own OAuth, not the app's PKCE token.** Tokens issued to a custom client ID pass the classic session login but are then denied by login5 with `INVALID_CREDENTIALS` when spirc registers the Connect device. `--enable-oauth` (librespot's own client ID) is used for a one-time browser approval; reusable credentials land in the system cache and later launches log in silently. If Spotify rejects the cached credentials, they are reset automatically and the next start re-authorizes.
+> - **Locator probes fixed install paths** (`/opt/homebrew/opt/librespot/bin`, `/usr/local/opt/…`, plus `bin/` fallbacks) instead of shelling out to `brew --prefix`: simpler, no brew dependency at runtime, same coverage.
+
+- [x] `LibrespotLocator`: detect the install without depending on the shell PATH by probing the stable Homebrew `opt` prefixes (Apple Silicon and Intel) and `bin` fallbacks.
+- [x] Validate version with `librespot --version`: block if < 0.8.0 (message "update with `brew upgrade librespot`"); newer or unparseable versions proceed and are logged.
+- [x] Setup sheet when librespot is missing: copyable `brew install librespot`, experimental/ToS/Premium warning, and a "Check again" button. The app does not run brew.
+- [x] `LibrespotEngine`: launch the external binary with `Process`:
+  - `librespot --name "SpotifyLite" --backend rodio --zeroconf-backend dns-sd --device-type computer --bitrate 320 --system-cache <Application Support>/SpotifyLite/librespot` (plus `--enable-oauth` on first run only).
+  - Lifetime wrapper (`LibrespotProcessLifetime`): a bash trap tied to a stdin pipe kills librespot if the app dies for any reason (crash, SIGKILL, Xcode stop); stale orphans are reaped before every start.
+  - Supervision: if the process dies unexpectedly, restart with backoff (3 attempts: 1 s/2 s/4 s; the budget resets after 60 s of healthy uptime); if it keeps failing, fall back to remote-control mode with a banner and a "Retry" button. stderr is logged to Application Support (no tokens).
+- [x] On activation, transfer playback to the "SpotifyLite" device (`PUT /me/player` with its device id), waiting for the Connect registration to appear.
 - [x] Playback state: reuse Phase 2 polling (the `--onevent` event bridge remains a future improvement).
 - [x] `NowPlayingBridge`: `MPNowPlayingInfoCenter` (title, artist, artwork, position) + `MPRemoteCommandCenter` (keyboard media keys, AirPods).
 
-**Exit criterion:** with librespot installed and the mode enabled, the app plays audio itself, responds to media keys, and appears in the macOS Now Playing widget; without librespot, the app remains complete in remote-control mode.
+**Exit criterion:** with librespot installed, the app plays audio itself, responds to media keys, and appears in the macOS Now Playing widget; without librespot, the app remains complete in remote-control mode and offers the setup sheet.
 
 ## Future improvements (unestimated)
 

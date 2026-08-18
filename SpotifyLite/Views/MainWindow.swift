@@ -44,6 +44,9 @@ struct MainWindow: View {
                 CheatsheetView(keyboard: keyboard)
             }
         }
+        .sheet(isPresented: Bindable(player).localSetupNeeded) {
+            LibrespotSetupView(player: player)
+        }
         .preferredColorScheme(colorScheme)
         .background { GlobalKeyboardShortcuts(keyboard: keyboard) }
         // Applied to the outer layout so PlayerBarView and the
@@ -192,6 +195,14 @@ struct MainWindow: View {
                 .font(.callout)
                 .lineLimit(2)
             Spacer()
+            if player.canRetryLocalPlayback(for: message) {
+                Button("Retry") {
+                    player.lastError = nil
+                    Task { await player.playOnThisMac() }
+                }
+                .buttonStyle(.plain)
+                .fontWeight(.semibold)
+            }
             Button("Dismiss") { player.lastError = nil }
                 .buttonStyle(.plain)
         }

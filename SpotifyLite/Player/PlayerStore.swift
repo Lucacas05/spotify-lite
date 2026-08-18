@@ -162,6 +162,8 @@ final class PlayerStore {
     private(set) var state: PlaybackState?
     private(set) var devices: [Device] = []
     var lastError: String?
+    /// True when local playback needs librespot installed — drives the setup sheet.
+    var localSetupNeeded = false
     /// Optimistic volume so keyboard +/- update the slider without waiting for poll.
     var volumePercent: Int = 50
 
@@ -190,6 +192,13 @@ final class PlayerStore {
         self.nowPlaying = nowPlaying ?? NowPlayingBridge()
         self.nowPlaying.onCommand = { [weak self] command in
             Task { await self?.handleNowPlayingCommand(command) }
+        }
+        // Surface asynchronous engine deaths (crash-restart budget exhausted)
+        // as a banner; the app keeps working in remote-control mode.
+        localEngine.onUnrecoverableFailure = { [weak self] message in
+            self?.lastError = message
+            self?.publishNowPlaying()
+            self?.reconcilePolling()
         }
     }
 
@@ -440,7 +449,13 @@ final class PlayerStore {
     private func ensureLocalDevice() async -> Device? {
         await localEngine.start()
         guard localEngine.isRunning else {
-            if case .failed(let message) = localEngine.status { lastError = message }
+            if localEngine.isNotInstalled {
+                // Missing binary is a setup task, not an error: show the
+                // install sheet instead of the red banner.
+                localSetupNeeded = true
+            } else if case .failed(let message) = localEngine.status {
+                lastError = message
+            }
             return nil
         }
 
@@ -468,6 +483,15 @@ final class PlayerStore {
         localEngine.stop()
         publishNowPlaying()
         reconcilePolling()
+    }
+
+    /// True when the banner message came from the local engine, so the
+    /// banner can offer a one-click "Retry" that restarts local playback.
+    func canRetryLocalPlayback(for message: String) -> Bool {
+        if case .failed(let engineMessage) = localEngine.status {
+            return engineMessage == message
+        }
+        return false
     }
 
     func handleSignOut() {
@@ -509,6 +533,9 @@ final class PlayerStore {
                 // No active Connect device anywhere: fall back to the local
                 // librespot engine and target it explicitly.
                 guard let device = await ensureLocalDevice(), let deviceID = device.id else {
+                    // The setup sheet is already telling the user what to do;
+                    // a red banner on top would be noise.
+                    if localSetupNeeded { return }
                     // ensureLocalDevice already set lastError to the real cause;
                     // rethrowing the 404 would mask it behind the generic message.
                     throw LocalPlaybackError(message: lastError ?? error.localizedDescription)

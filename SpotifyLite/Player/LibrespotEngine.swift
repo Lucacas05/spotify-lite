@@ -24,11 +24,26 @@ final class LibrespotEngine {
         case failed(String)
     }
 
+    /// Restart-on-crash budget: 1 s, 2 s, 4 s, then give up until the user retries.
+    static let restartDelaysSeconds: [Int] = [1, 2, 4]
+    /// A crash after this much uptime starts a fresh retry budget.
+    static let healthyUptimeSeconds: TimeInterval = 60
+
     private(set) var status: Status = .stopped
+    /// True when the last start failed because the binary is missing —
+    /// the UI shows the install sheet instead of an error banner.
+    private(set) var isNotInstalled = false
+    /// Called when the engine gives up (crash-restart budget exhausted or a
+    /// failure that needs the user), so the owner can surface a banner.
+    var onUnrecoverableFailure: ((String) -> Void)?
+
     private var process: Process?
     /// Write end of the wrapper stdin pipe. Closing it (or dying) kills librespot.
     private var lifetimeStdin: FileHandle?
     private var recentStderr: [String] = []
+    private var restartAttempts = 0
+    private var restartTask: Task<Void, Never>?
+    private var launchDate: Date?
     private let logger = Logger(subsystem: "com.lucas.spotifylite", category: "librespot")
 
     var isRunning: Bool {
@@ -38,6 +53,9 @@ final class LibrespotEngine {
 
     func start() async {
         guard process == nil else { return }
+        cancelPendingRestart()
+        restartAttempts = 0
+        isNotInstalled = false
         await reapStaleInstances()
         status = .starting
         do {
@@ -47,6 +65,9 @@ final class LibrespotEngine {
             status = .running(version: installation.version)
         } catch {
             logger.error("start failed: \(error.localizedDescription, privacy: .public)")
+            if case LibrespotLocator.LocatorError.notInstalled = error {
+                isNotInstalled = true
+            }
             status = .failed(error.localizedDescription)
             closeLifetimePipe()
             process = nil
@@ -54,7 +75,11 @@ final class LibrespotEngine {
     }
 
     func stop() {
-        guard let process else { return }
+        cancelPendingRestart()
+        guard let process else {
+            status = .stopped
+            return
+        }
         // Clear first so terminationHandler treats this as an intentional stop.
         self.process = nil
         process.terminationHandler = nil
@@ -138,6 +163,7 @@ final class LibrespotEngine {
         try process.run()
         self.process = process
         self.lifetimeStdin = lifetimePipe.fileHandleForWriting
+        self.launchDate = Date()
     }
 
     private func handleTermination(code: Int32) {
@@ -149,15 +175,58 @@ final class LibrespotEngine {
         if detail.contains("INVALID_CREDENTIALS") || detail.contains("Login request was denied") {
             // Stored credentials went bad; drop them so the next start
             // re-runs the browser authorization instead of failing forever.
+            // Restarting automatically would pop the OAuth browser unasked.
             if let dir = try? cacheDirectory() {
                 try? FileManager.default.removeItem(at: dir.appending(path: "credentials.json"))
             }
-            status = .failed("Spotify rejected the saved credentials. They were reset — try playing again to re-authorize.")
+            let message = "Spotify rejected the saved credentials. They were reset — try playing again to re-authorize."
+            status = .failed(message)
+            onUnrecoverableFailure?(message)
             return
         }
-        status = .failed(detail.isEmpty
-            ? "librespot exited with code \(code)."
-            : "librespot exited with code \(code): \(detail)")
+
+        // Unexpected death: restart with backoff before giving up.
+        if let launchDate, Date().timeIntervalSince(launchDate) > Self.healthyUptimeSeconds {
+            restartAttempts = 0
+        }
+        if restartAttempts < Self.restartDelaysSeconds.count {
+            restartAttempts += 1
+            let delay = Self.restartDelaysSeconds[restartAttempts - 1]
+            logger.info("restarting in \(delay)s (attempt \(self.restartAttempts)/\(Self.restartDelaysSeconds.count))")
+            status = .starting
+            restartTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                await self?.relaunchAfterCrash()
+            }
+            return
+        }
+
+        let message = detail.isEmpty
+            ? "Local playback stopped (librespot exited with code \(code))."
+            : "Local playback stopped: \(detail)"
+        status = .failed(message)
+        onUnrecoverableFailure?(message)
+    }
+
+    private func relaunchAfterCrash() async {
+        // stop() or a user start() may have raced the backoff sleep.
+        guard process == nil, status == .starting else { return }
+        do {
+            let installation = try LibrespotLocator.locate()
+            try launch(installation: installation)
+            logger.info("relaunched after crash (attempt \(self.restartAttempts))")
+            status = .running(version: installation.version)
+        } catch {
+            logger.error("relaunch failed: \(error.localizedDescription, privacy: .public)")
+            status = .failed(error.localizedDescription)
+            onUnrecoverableFailure?(error.localizedDescription)
+        }
+    }
+
+    private func cancelPendingRestart() {
+        restartTask?.cancel()
+        restartTask = nil
     }
 
     private func recordStderr(_ chunk: String) {
