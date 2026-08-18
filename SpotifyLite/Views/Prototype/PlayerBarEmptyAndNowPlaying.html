@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>PROTOTIPO — Player bar vacía y click-through de Now Playing</title>
+<style>
+  :root {
+    --bg: #121212;
+    --panel: #181818;
+    --panel-2: #1f1f1f;
+    --text: #eaeaea;
+    --muted: #9a9a9a;
+    --accent: #1DB954;
+    --danger: #e85d5d;
+    --border: #2a2a2a;
+    --warn: #e6b325;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+    padding: 24px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 20px; margin-bottom: 6px; }
+  h2 { font-size: 15px; margin: 22px 0 8px; }
+  .intro, .watch {
+    color: var(--muted);
+    line-height: 1.55;
+    margin-bottom: 16px;
+    max-width: 78ch;
+  }
+  .intro strong, .watch strong { color: var(--text); }
+  kbd {
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    color: var(--text);
+  }
+
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tab {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .tab.active { color: var(--text); border-color: var(--accent); }
+  .tab .tag {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-left: 6px;
+    color: var(--accent);
+  }
+  .tab.rejected .tag { color: var(--danger); }
+
+  .stage {
+    background: #0c0c0c;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 12px;
+  }
+  .stage-chrome {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #444; }
+  .dot.red { background: var(--danger); }
+
+  .banner {
+    background: rgba(232, 93, 93, 0.15);
+    color: #ffb4b4;
+    padding: 8px 16px;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(232, 93, 93, 0.3);
+    display: none;
+  }
+  .banner.show { display: block; }
+
+  .player {
+    background: var(--panel);
+    padding: 10px 16px 12px;
+  }
+  .scrubber {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+  }
+  .bar {
+    flex: 1; height: 4px; background: #333; border-radius: 99px; position: relative;
+  }
+  .bar .fill { height: 100%; width: 0; background: var(--accent); border-radius: 99px; }
+  .row {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 16px;
+  }
+  .now {
+    display: flex; align-items: center; gap: 12px; min-width: 0;
+  }
+  .art {
+    width: 44px; height: 44px; border-radius: 6px;
+    background: #2a2a2a;
+    display: flex; align-items: center; justify-content: center;
+    color: #555; font-size: 18px; flex-shrink: 0;
+    overflow: hidden;
+  }
+  .art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .art.clickable { cursor: pointer; outline: 1px solid transparent; }
+  .art.clickable:hover { outline-color: var(--accent); }
+  .meta { min-width: 0; }
+  .meta .title {
+    font-size: 13px; font-weight: 600; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .meta .artist { font-size: 11px; color: var(--muted); }
+  .meta .title.link, .meta .artist.link { cursor: pointer; }
+  .meta .title.link:hover, .meta .artist.link:hover { text-decoration: underline; color: var(--accent); }
+
+  .cta {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .cta p { font-size: 12px; color: var(--muted); }
+  .cta-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  .transport { display: flex; align-items: center; gap: 14px; }
+  .tbtn {
+    width: 26px; height: 26px; border: none; background: transparent;
+    color: var(--muted); cursor: pointer; font-size: 13px;
+  }
+  .tbtn.play {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--text); color: var(--bg); font-size: 12px; font-weight: 700;
+  }
+  .tbtn:disabled { opacity: 0.28; cursor: not-allowed; }
+  .tbtn.shuffle.on { color: var(--accent); }
+
+  .right { display: flex; align-items: center; gap: 12px; justify-content: flex-end; }
+  .vol { width: 70px; height: 4px; background: #333; border-radius: 99px; }
+  .vol .fill { width: 50%; height: 100%; background: #888; border-radius: 99px; }
+  .device {
+    display: flex; align-items: center; gap: 5px;
+    background: transparent; border: none; color: var(--text);
+    font-size: 11px; cursor: pointer; padding: 4px 0;
+  }
+
+  .menu {
+    position: absolute; right: 24px; margin-top: 4px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; min-width: 220px; padding: 6px 0;
+    display: none; z-index: 5;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  }
+  .menu.open { display: block; }
+  .menu button, .menu .dead {
+    display: block; width: 100%; text-align: left;
+    background: none; border: none; color: var(--text);
+    padding: 7px 12px; font-size: 13px; cursor: pointer;
+  }
+  .menu button:hover { background: rgba(29,185,84,0.15); }
+  .menu .dead { color: var(--muted); cursor: default; }
+  .menu hr { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+
+  .nav-toast {
+    display: none;
+    padding: 10px 16px;
+    background: var(--panel-2);
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--accent);
+  }
+  .nav-toast.show { display: block; }
+
+  .sheet-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.65); align-items: center; justify-content: center; z-index: 20;
+  }
+  .sheet-overlay.open { display: flex; }
+  .sheet {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 22px; width: 440px;
+  }
+  .sheet h3 { font-size: 16px; margin-bottom: 10px; }
+  .sheet p { color: var(--muted); line-height: 1.5; margin-bottom: 10px; }
+  .code {
+    font-family: ui-monospace, monospace; background: var(--panel-2);
+    border-radius: 6px; padding: 8px 10px; margin-bottom: 12px;
+  }
+  .warn {
+    color: #f0d48a; font-size: 13px; line-height: 1.45;
+    margin-bottom: 14px;
+  }
+  .sheet-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+  .verdict {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-top: 8px;
+  }
+  .verdict li { margin: 6px 0 6px 18px; line-height: 1.45; color: var(--muted); }
+  .verdict li strong { color: var(--text); }
+  .note {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+  .player-wrap { position: relative; }
+</style>
+</head>
+<body>
+
+<h1>PROTOTIPO — Player bar sin dispositivo y click-through</h1>
+<p class="intro">
+  Descartable para el ticket #23. Parte de <strong>#16</strong>: un 404 ya no arranca librespot;
+  “This Mac (set up…)” abre consentimiento; después, “Play on this Mac”.
+  Cambia de escenario y pulsa los controles. El primero es el comportamiento <em>actual</em> (roto);
+  los demás son propuestas.
+</p>
+
+<div class="tabs" id="tabs"></div>
+<div class="stage">
+  <div class="stage-chrome">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span id="chrome-label">SpotifyLite — player bar</span>
+  </div>
+  <div class="banner" id="banner">Spotify responded 404: No active device</div>
+  <div class="player-wrap">
+    <div class="player" id="player"></div>
+    <div class="menu" id="menu"></div>
+  </div>
+  <div class="nav-toast" id="toast"></div>
+</div>
+<p class="note" id="caption"></p>
+
+<h2>Qué observar</h2>
+<p class="watch">
+  (1) En el escenario actual, Play dispara un banner rojo aunque la barra diga “Nothing playing”.
+  (2) En “prompt accionable”, los controles están muertos a propósito: el camino es el CTA o el menú de dispositivos.
+  (3) Con pista sonando, el artwork y el título son el click-through al álbum; el artista, al artista.
+  (4) El panel Now Playing aparte se prototipa para rechazarlo: duplica la barra y el mapa lo dejó fuera (letras = dependencia externa).
+</p>
+
+<div class="verdict">
+  <strong>Reacción (decisión propuesta)</strong>
+  <ul>
+    <li><strong>Barra vacía:</strong> degradar a prompt accionable. Controles deshabilitados. Sin 404→banner. Copy de #13: “No hay ningún dispositivo activo.” CTA: abrir el menú, más “This Mac (set up…)” o “Reproducir en esta Mac” según consentimiento (#16). Cuenta Free (#14): mismo prompt sin el atajo local.</li>
+    <li><strong>Click en artwork:</strong> navega a <code>AlbumDetailView</code> si hay <code>album.id</code>. Título igual. Artista → <code>ArtistDetailView</code>. Sin álbum, el artwork no es botón.</li>
+    <li><strong>Panel Now Playing / ventana aparte:</strong> no en 0.2. La barra + álbum/artista cubren el click-through. Letras fuera (Web API no las da; rompería cero dependencias).</li>
+  </ul>
+</div>
+
+<div class="sheet-overlay" id="sheet">
+  <div class="sheet">
+    <h3>Reproducir en esta Mac</h3>
+    <p>SpotifyLite puede sacar audio en este Mac con librespot (no oficial, fuera de los términos de Spotify; riesgo teórico de cuenta). Requiere Premium.</p>
+    <div class="code">brew install librespot <button class="btn" id="copy">Copiar</button></div>
+    <p class="warn">Al continuar aceptas el aviso. La primera vez Spotify abre el navegador para autorizar librespot.</p>
+    <div class="sheet-actions">
+      <button class="btn" id="sheet-cancel">Cancelar</button>
+      <button class="btn primary" id="sheet-ok">Entiendo, continuar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const scenarios = [
+  {
+    id: "today",
+    label: "Hoy (roto)",
+    tag: "baseline",
+    caption: "Click simple en Play/Next dispara el comando, Spotify responde 404 y el banner rojo tapa una barra que ya decía “Nothing playing”. El artwork no hace nada.",
+    playing: false,
+    device: null,
+    consented: false,
+    fireOnDead: true,
+    prompt: false,
+    clickableArt: false,
+    nowPlayingPanel: false,
+  },
+  {
+    id: "prompt",
+    label: "Prompt accionable",
+    tag: "propuesta",
+    caption: "Controles deshabilitados. La zona Now Playing se convierte en un CTA: elegir dispositivo o configurar esta Mac. Cero banners de 404.",
+    playing: false,
+    device: null,
+    consented: false,
+    fireOnDead: false,
+    prompt: true,
+    clickableArt: false,
+    nowPlayingPanel: false,
+  },
+  {
+    id: "prompt-consented",
+    label: "Prompt, ya consintió",
+    tag: "propuesta",
+    caption: "Misma degradación, pero el CTA primario es “Reproducir en esta Mac” (opt-in ya dado). Sigue sin auto-lanzar por un Play de la lista.",
+    playing: false,
+    device: null,
+    consented: true,
+    fireOnDead: false,
+    prompt: true,
+    clickableArt: false,
+    nowPlayingPanel: false,
+  },
+  {
+    id: "playing-album",
+    label: "Sonando → álbum",
+    tag: "propuesta",
+    caption: "Hay device y pista. Artwork + título navegan al álbum; artista al artista. No hay panel extra.",
+    playing: true,
+    device: "iPhone de Lucas",
+    consented: true,
+    fireOnDead: false,
+    prompt: false,
+    clickableArt: true,
+    nowPlayingPanel: false,
+    track: { title: "Instant Crush", artist: "Daft Punk", album: "Random Access Memories" },
+  },
+  {
+    id: "panel",
+    label: "Panel Now Playing",
+    tag: "rechazado",
+    rejected: true,
+    caption: "El artwork abre un panel extra. Se siente a media app: duplica la barra, no añade letras (la API no las da) y el mapa lo dejó fuera de 0.2.",
+    playing: true,
+    device: "iPhone de Lucas",
+    consented: true,
+    fireOnDead: false,
+    prompt: false,
+    clickableArt: true,
+    nowPlayingPanel: true,
+    track: { title: "Instant Crush", artist: "Daft Punk", album: "Random Access Memories" },
+  },
+];
+
+const params = new URLSearchParams(location.search);
+const initialId = params.get("variant") || "prompt";
+let current = scenarios.find(s => s.id === initialId) || scenarios[1];
+let menuOpen = false;
+let toastTimer;
+
+const tabs = document.getElementById("tabs");
+scenarios.forEach((s, i) => {
+  const b = document.createElement("button");
+  b.className = "tab" + (s.rejected ? " rejected" : "") + (s.id === current.id ? " active" : "");
+  b.innerHTML = s.label + (s.tag ? `<span class="tag">${s.tag}</span>` : "");
+  b.onclick = () => select(s.id);
+  tabs.appendChild(b);
+});
+
+function select(id) {
+  current = scenarios.find(s => s.id === id);
+  menuOpen = false;
+  hideToast();
+  document.getElementById("banner").classList.remove("show");
+  document.getElementById("sheet").classList.remove("open");
+  [...tabs.children].forEach((el, i) => el.classList.toggle("active", scenarios[i].id === id));
+  const url = new URL(location.href);
+  url.searchParams.set("variant", id);
+  history.replaceState(null, "", url);
+  render();
+}
+
+function hideToast() {
+  document.getElementById("toast").classList.remove("show");
+}
+function showToast(text) {
+  const t = document.getElementById("toast");
+  t.textContent = text;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, 2200);
+}
+
+function fireDead() {
+  if (current.fireOnDead) {
+    document.getElementById("banner").classList.add("show");
+    document.querySelector(".dot").classList.add("red");
+  }
+}
+
+function openMac() {
+  menuOpen = false;
+  if (!current.consented) {
+    document.getElementById("sheet").classList.add("open");
+  } else {
+    showToast("Arrancaría librespot (Play on this Mac) — opt-in de #16.");
+  }
+  render();
+}
+
+function render() {
+  const playing = current.playing;
+  const disabled = !playing && !current.device;
+  const track = current.track;
+  const artInner = playing
+    ? `<div class="art ${current.clickableArt ? "clickable" : ""}" id="art">♪</div>`
+    : `<div class="art">♪</div>`;
+
+  const nowBlock = current.prompt && !playing
+    ? `<div class="cta">
+         <p>No hay ningún dispositivo activo.</p>
+         <div class="cta-row">
+           <button class="btn" id="cta-devices">Elegir dispositivo</button>
+           <button class="btn primary" id="cta-mac">${current.consented ? "Reproducir en esta Mac" : "This Mac (set up…)"}</button>
+         </div>
+       </div>`
+    : `<div class="now">
+         ${artInner}
+         <div class="meta">
+           <div class="title ${current.clickableArt ? "link" : ""}" id="title">${track ? track.title : "Nothing playing"}</div>
+           <div class="artist ${current.clickableArt ? "link" : ""}" id="artist">${track ? track.artist : ""}</div>
+         </div>
+       </div>`;
+
+  document.getElementById("player").innerHTML = `
+    <div class="scrubber">
+      <span>0:00</span>
+      <div class="bar"><div class="fill" style="width:${playing ? "32%" : "0"}"></div></div>
+      <span>${playing ? "5:33" : "0:00"}</span>
+    </div>
+    <div class="row">
+      ${nowBlock}
+      <div class="transport">
+        <button class="tbtn shuffle" ${disabled ? "disabled" : ""} title="Shuffle">shuffle</button>
+        <button class="tbtn" ${disabled ? "disabled" : ""} id="prev" title="Previous">⏮</button>
+        <button class="tbtn play" ${disabled ? "disabled" : ""} id="play">${playing ? "❚❚" : "▶"}</button>
+        <button class="tbtn" ${disabled ? "disabled" : ""} id="next" title="Next">⏭</button>
+      </div>
+      <div class="right">
+        <div class="vol"><div class="fill"></div></div>
+        <button class="device" id="device-btn">🔊 ${current.device || "Devices"} ▾</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("menu").className = "menu" + (menuOpen ? " open" : "");
+  document.getElementById("menu").innerHTML = `
+    <button id="menu-mac">${current.consented ? "Play on this Mac" : "This Mac (set up…)"}</button>
+    <hr>
+    ${current.device ? `<button>✓ ${current.device}</button>` : `<div class="dead">No active devices</div>`}
+    <hr>
+    <button id="menu-refresh">Refresh devices</button>
+  `;
+  document.getElementById("caption").textContent = current.caption;
+  document.getElementById("chrome-label").textContent =
+    "SpotifyLite — " + current.label + (current.rejected ? " (rechazado)" : "");
+
+  const bindDead = id => {
+    const el = document.getElementById(id);
+    if (el) el.onclick = fireDead;
+  };
+  ["play", "prev", "next"].forEach(bindDead);
+
+  const deviceBtn = document.getElementById("device-btn");
+  if (deviceBtn) deviceBtn.onclick = () => { menuOpen = !menuOpen; render(); };
+  const ctaDev = document.getElementById("cta-devices");
+  if (ctaDev) ctaDev.onclick = () => { menuOpen = true; render(); };
+  const ctaMac = document.getElementById("cta-mac");
+  if (ctaMac) ctaMac.onclick = openMac;
+  const menuMac = document.getElementById("menu-mac");
+  if (menuMac) menuMac.onclick = openMac;
+
+  const goAlbum = () => showToast("Navegaría a AlbumDetailView — Random Access Memories");
+  const goArtist = () => showToast("Navegaría a ArtistDetailView — Daft Punk");
+  const art = document.getElementById("art");
+  const title = document.getElementById("title");
+  const artist = document.getElementById("artist");
+  if (current.nowPlayingPanel && art) {
+    art.onclick = () => showToast("Abriría un panel Now Playing (rechazado en 0.2).");
+  } else if (current.clickableArt) {
+    if (art) art.onclick = goAlbum;
+    if (title) title.onclick = goAlbum;
+    if (artist) artist.onclick = goArtist;
+  }
+}
+
+document.getElementById("sheet-cancel").onclick = () => document.getElementById("sheet").classList.remove("open");
+document.getElementById("sheet-ok").onclick = () => {
+  document.getElementById("sheet").classList.remove("open");
+  current = { ...current, consented: true };
+  showToast("Consentimiento guardado por cuenta (#16). Próximo start de librespot.");
+  render();
+};
+document.getElementById("copy").onclick = () => showToast("Copiado: brew install librespot");
+document.addEventListener("click", (e) => {
+  if (menuOpen && !e.target.closest(".menu") && e.target.id !== "device-btn" && e.target.id !== "cta-devices") {
+    menuOpen = false;
+    render();
+  }
+});
+
+render();
+</script>
+</body>
+</html>
