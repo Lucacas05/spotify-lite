@@ -35,9 +35,9 @@ final class LibrespotEngine {
     /// failure that needs the user), so the owner can surface a banner and
     /// fall back to remote control.
     var onUnrecoverableFailure: ((String) -> Void)?
-    /// Called after a successful launch (including crash relaunch) so the
-    /// owner can capture the Connect device id.
-    var onBecameRunning: (() -> Void)?
+    /// Called when the child exits for any reason other than `stop()`, so the
+    /// owner can drop Now Playing ownership. Not a poll.
+    var onProcessExited: (() -> Void)?
 
     private var process: Process?
     private var startTask: Task<Void, Never>?
@@ -47,6 +47,10 @@ final class LibrespotEngine {
     private var restartAttempts = 0
     private var restartTask: Task<Void, Never>?
     private var launchDate: Date?
+    /// True only while a user-started local session may be auto-relaunched.
+    /// Cleared on `stop()` and after degrade — then the supervisor must not
+    /// launch again until the next explicit opt-in.
+    private var userSessionActive = false
     private let logger = Logger(subsystem: "com.lucas.spotifylite", category: "librespot")
 
     var isRunning: Bool {
@@ -55,10 +59,12 @@ final class LibrespotEngine {
     }
 
     func start() async {
+        userSessionActive = true
         await runStart(resetAttempts: true)
     }
 
     func stop() {
+        userSessionActive = false
         startTask?.cancel()
         startTask = nil
         cancelPendingRestart()
@@ -81,6 +87,9 @@ final class LibrespotEngine {
     }
 
     private func runStart(resetAttempts: Bool) async {
+        if !resetAttempts && !userSessionActive {
+            return
+        }
         switch LibrespotStartGate.role(hasInFlightStart: startTask != nil, hasLiveProcess: process != nil) {
         case .joinInFlight:
             await startTask?.value
@@ -125,7 +134,6 @@ final class LibrespotEngine {
             guard !Task.isCancelled else { return }
             logger.info("launched \(installation.version, privacy: .public) from \(installation.binaryURL.path, privacy: .public)")
             status = .running(version: installation.version)
-            onBecameRunning?()
         } catch {
             logger.error("start failed: \(error.localizedDescription, privacy: .public)")
             if case LibrespotLocator.LocatorError.notInstalled = error {
@@ -134,6 +142,7 @@ final class LibrespotEngine {
             status = .failed(error.localizedDescription)
             closeLifetimePipe()
             process = nil
+            userSessionActive = false
             if !resetAttempts {
                 onUnrecoverableFailure?(error.localizedDescription)
             }
@@ -209,6 +218,7 @@ final class LibrespotEngine {
         guard !wasIntentionalStop else { return }
         process = nil
         closeLifetimePipe()
+        onProcessExited?()
         let detail = recentStderr.suffix(3).joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let kind = LibrespotRestartPolicy.classify(
@@ -221,7 +231,8 @@ final class LibrespotEngine {
             kind: kind,
             uptime: uptime,
             attemptsSoFar: restartAttempts,
-            stderrDetail: detail
+            stderrDetail: detail,
+            userSessionActive: userSessionActive
         )
         restartAttempts = outcome.attempts
 
@@ -239,6 +250,7 @@ final class LibrespotEngine {
             restartTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(delay))
                 guard !Task.isCancelled else { return }
+                guard self?.userSessionActive == true else { return }
                 await self?.runStart(resetAttempts: false)
             }
         case .degradeToRemote(let message):
@@ -247,6 +259,10 @@ final class LibrespotEngine {
     }
 
     private func degradeToRemoteControl(message: String) {
+        userSessionActive = false
+        cancelPendingRestart()
+        startTask?.cancel()
+        startTask = nil
         status = .failed(message)
         closeLifetimePipe()
         process = nil

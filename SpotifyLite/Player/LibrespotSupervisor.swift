@@ -55,15 +55,21 @@ enum LibrespotRestartPolicy {
         return .unexpectedCleanExit
     }
 
-    /// Crash / nonzero is restartable. Intentional stop, rejected credentials,
-    /// and a clean unexpected exit are not. After the delay list is exhausted,
-    /// degrade to remote control — never leave `.failed` with no fallback.
+    /// Crash / nonzero is restartable **only while a user-started session is
+    /// still active**. After max attempts, degrade and stop — do not keep
+    /// launching. Intentional stop, rejected credentials, and a clean
+    /// unexpected exit are not restartable.
     static func decide(
         kind: LibrespotExitKind,
         uptime: TimeInterval,
         attemptsSoFar: Int,
-        stderrDetail: String = ""
+        stderrDetail: String = "",
+        userSessionActive: Bool = true
     ) -> (decision: LibrespotRestartDecision, attempts: Int) {
+        if !userSessionActive {
+            if kind == .intentionalStop { return (.ignore, 0) }
+            return (.degradeToRemote(message: "Local playback stopped."), attemptsSoFar)
+        }
         switch kind {
         case .intentionalStop:
             return (.ignore, 0)
@@ -96,11 +102,6 @@ enum PlaybackActiveDevice {
         guard let id = state?.device?.id, !id.isEmpty else { return nil }
         return id
     }
-}
-
-enum LocalPlaybackStartPolicy {
-    /// Honor #16 and map #1: a 404 / missing Connect device never launches librespot.
-    static let startOnNoActiveDevice = false
 }
 
 enum LibrespotLaunchFlags {

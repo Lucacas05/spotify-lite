@@ -183,6 +183,12 @@ final class PlayerStore {
     /// Now Playing uses this id, not the advertised name "SpotifyLite".
     private(set) var localDeviceID: String?
     private(set) var lastConfirmedDeviceID: String?
+    /// Per-account opt-in from #16. This supervisor starts only when the
+    /// reason is `.explicitOptIn` **and** this flag is true. Default true so
+    /// the existing "Play on this Mac" / Retry path remains that explicit
+    /// opt-in until #16 wires the consent store (it will set this false until
+    /// the account grants). 404, sign-in, and discovery never call `start()`.
+    private(set) var hasLocalPlaybackConsent = true
 
     init(nowPlaying: NowPlayingBridge? = nil) {
         self.nowPlaying = nowPlaying ?? NowPlayingBridge()
@@ -197,8 +203,10 @@ final class PlayerStore {
             self?.publishNowPlaying()
             self?.reconcilePolling()
         }
-        localEngine.onBecameRunning = { [weak self] in
-            Task { await self?.handleEngineBecameRunning() }
+        localEngine.onProcessExited = { [weak self] in
+            self?.forgetLocalPlaybackSession()
+            self?.publishNowPlaying()
+            self?.reconcilePolling()
         }
     }
 
@@ -439,16 +447,21 @@ final class PlayerStore {
         }
     }
 
-    /// Starts the local librespot engine and moves playback to this Mac, so the
-    /// app works standalone with no official Spotify client open anywhere.
+    /// Starts the local librespot engine only from explicit opt-in.
+    /// #16 owns per-account consent: `hasLocalPlaybackConsent` is that flag.
+    /// 404 / no-device / locator success never call this.
     func playOnThisMac() async {
+        guard LocalPlaybackStartPolicy.shouldLaunchLibrespot(
+            for: .explicitOptIn,
+            hasAccountConsent: hasLocalPlaybackConsent
+        ) else { return }
         guard let device = await ensureLocalDevice() else { return }
         await transferPlayback(to: device)
         reconcilePolling()
     }
 
-    /// Starts librespot (if needed) and waits until it registers as a Connect
-    /// device. Returns the device, or nil after setting `lastError`.
+    /// Starts librespot only after `playOnThisMac` passed the #16 start policy.
+    /// Locator success here does not itself decide to launch.
     private func ensureLocalDevice() async -> Device? {
         await localEngine.start()
         guard localEngine.isRunning else {
@@ -531,7 +544,7 @@ final class PlayerStore {
         }
         let expectedURI = trackURI ?? uris?.first
         await run(mutation: .play(expectedURI: expectedURI)) {
-            // Honor #16 / map #1: a 404 / no active device never starts librespot.
+            // 404 / no active device must not start librespot (#16, PERFORMANCE.md).
             try await SpotifyClient.shared.command("PUT", "me/player/play", body: body.isEmpty ? nil : body)
         }
     }
@@ -566,31 +579,6 @@ final class PlayerStore {
             lastConfirmedDeviceID = nil
         }
         localDeviceID = nil
-    }
-
-    /// After a crash relaunch the Connect device id may change. Recapture it
-    /// and retarget playback so the session continues. First start leaves
-    /// capture to `ensureLocalDevice`.
-    private func handleEngineBecameRunning() async {
-        let previousID = localDeviceID
-        guard previousID != nil else { return }
-        localDeviceID = nil
-        publishNowPlaying()
-        let attempts = localEngine.needsAuthorization ? 60 : 10
-        for attempt in 0..<attempts {
-            await loadDevices()
-            if let device = localConnectDevice(from: devices) {
-                localDeviceID = device.id
-                if device.id != previousID {
-                    await transferPlayback(to: device)
-                }
-                publishNowPlaying()
-                reconcilePolling()
-                return
-            }
-            if !localEngine.isRunning { return }
-            try? await Task.sleep(for: .seconds(attempt == 0 ? 1.5 : 1))
-        }
     }
 
     private func nextPollIntervalSeconds() -> Int? {
