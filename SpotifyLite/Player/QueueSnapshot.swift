@@ -127,4 +127,42 @@ struct QueueRefreshState {
         isLoading = false
         inFlightGeneration = nil
     }
+
+    /// Keep the queue mirror aligned with an optimistic skip. This is not a
+    /// local queue editor: Spotify still owns order, and a failed next reverts.
+    mutating func applyOptimisticSkipForward() {
+        guard let next = upcoming.first else { return }
+        currentlyPlaying = next
+        upcoming.removeFirst()
+        discardInFlightRefresh()
+    }
+
+    /// Inverse of skip-forward for Previous: put the track Next left back on
+    /// the bar and return the one we are leaving to the head of upcoming.
+    mutating func applyOptimisticSkipBack(returning previous: Track, leaving current: Track?) {
+        currentlyPlaying = previous
+        if let current {
+            upcoming.insert(current, at: 0)
+        }
+        discardInFlightRefresh()
+    }
+
+    /// Drop upcoming rows until the player-bar URI is currently playing.
+    /// No-op when that URI is not in the snapshot — we do not invent order.
+    mutating func alignToPlayingURI(_ uri: String?) {
+        guard let uri else { return }
+        if currentlyPlaying?.uri == uri { return }
+        guard let index = upcoming.firstIndex(where: { $0.uri == uri }) else { return }
+        currentlyPlaying = upcoming[index]
+        upcoming.removeFirst(index + 1)
+        discardInFlightRefresh()
+    }
+
+    /// A skip must not let an in-flight GET /me/player/queue restore the
+    /// track that just moved into the player bar.
+    mutating func discardInFlightRefresh() {
+        generation += 1
+        inFlightGeneration = nil
+        isLoading = false
+    }
 }

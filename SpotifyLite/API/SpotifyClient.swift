@@ -123,12 +123,14 @@ actor SpotifyClient {
     private func send(_ method: String, path: String, query: [String: String],
                       body: [String: Any]?, allowAuthRetry: Bool,
                       rateLimitAttempt: Int) async throws -> Data {
+        try Task.checkCancellation()
         if sessionInvalidated {
             throw SpotifyAPIError.sessionExpired
         }
         guard var tokens = KeychainStore.load() else { throw SpotifyAPIError.notSignedIn }
         if tokens.isExpired {
             tokens = try await refreshTokens(tokens)
+            try Task.checkCancellation()
         }
 
         var components = URLComponents(url: baseURL.appending(path: path),
@@ -144,6 +146,9 @@ actor SpotifyClient {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
 
+        try Task.checkCancellation()
+        // Once the request has been sent, the server may already have applied
+        // it: do not surface a late cancellation as a failure of the operation.
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
@@ -153,7 +158,9 @@ actor SpotifyClient {
         case 200...299:
             return data
         case 401 where allowAuthRetry:
+            try Task.checkCancellation()
             _ = try await refreshTokens(tokens)
+            try Task.checkCancellation()
             return try await send(method, path: path, query: query, body: body,
                                   allowAuthRetry: false, rateLimitAttempt: rateLimitAttempt)
         case 401:
@@ -161,9 +168,11 @@ actor SpotifyClient {
             throw SpotifyAPIError.sessionExpired
         case 429:
             if SpotifyHTTPRetryPolicy.shouldRetryRateLimit(method: method, retryCount: rateLimitAttempt) {
+                try Task.checkCancellation()
                 let delay = SpotifyHTTPRetryPolicy.retryAfterSeconds(
                     from: http.value(forHTTPHeaderField: "Retry-After"))
                 try await Task.sleep(for: .seconds(delay))
+                try Task.checkCancellation()
                 return try await send(method, path: path, query: query, body: body,
                                       allowAuthRetry: allowAuthRetry,
                                       rateLimitAttempt: rateLimitAttempt + 1)

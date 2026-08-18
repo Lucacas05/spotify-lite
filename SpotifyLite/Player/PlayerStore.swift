@@ -179,6 +179,22 @@ final class PlayerStore {
     private var queueState = QueueRefreshState()
     private var queueLoadTask: Task<Void, Never>?
     private var playbackSyncTask: Task<Void, Never>?
+    /// Serial playback command queue. Identical pending items coalesce; drain
+    /// runs one mutation at a time. This is the only command queue.
+    private var playbackWorkItems: [PlaybackWorkItem] = []
+    private var isDrainingPlaybackWork = false
+    private var inFlightPlaybackItem: PlaybackWorkItem?
+    private var inFlightPlaybackTask: Task<Void, Never>?
+    private var playbackCommandEpoch = 0
+    private var remoteApplyGeneration = 0
+    private var pendingPollConfirmation: PlaybackMutation?
+    private var pendingPollConfirmationDeadline: Date?
+    /// Survives later play/pause mutations. Polls of any URI already skipped
+    /// past — including an older URI after two skips — must not revert the bar.
+    private var skipPollGuard = PlaybackQueueSync.SkipPollGuard()
+    /// Last distinct track the bar already showed. One slot, not a history stack.
+    private var lastBarTrack: Track?
+    private(set) var isPlaybackCommandInFlight = false
 
     var queue: [Track] { queueState.upcoming }
     var queueRows: [QueueRowItem] { queueState.rows }
@@ -227,6 +243,10 @@ final class PlayerStore {
 
     var currentTrackIdentifier: String? {
         state?.item?.id ?? state?.item?.uri
+    }
+
+    var isPlaying: Bool {
+        progressState.isPlaying
     }
 
     var isShuffling: Bool {
@@ -322,8 +342,30 @@ final class PlayerStore {
 
     func refresh() async {
         if haltSceneNetwork { return }
+        let generation = remoteApplyGeneration
         do {
             let refreshedState: PlaybackState? = try await SpotifyClient.shared.getOptional("me/player")
+            guard generation == remoteApplyGeneration else { return }
+            let snapshot = PlaybackQueueSnapshot(
+                playback: refreshedState,
+                currentlyPlaying: queueState.currentlyPlaying,
+                upcoming: queueState.upcoming
+            )
+            if !PlaybackQueueSync.shouldApplyPlaybackPoll(
+                snapshot,
+                pendingMutation: pendingPollConfirmation,
+                skipGuard: skipPollGuard,
+                now: Date(),
+                deadline: pendingPollConfirmationDeadline
+            ) {
+                return
+            }
+            pendingPollConfirmation = nil
+            pendingPollConfirmationDeadline = nil
+            skipPollGuard.reset()
+            if state?.item?.uri != refreshedState?.item?.uri {
+                rememberLastBarTrack(leaving: state?.item)
+            }
             state = refreshedState
             updateLastConfirmedDevice(from: refreshedState)
             let now = Date()
@@ -337,6 +379,7 @@ final class PlayerStore {
             if let volume = refreshedState?.device?.volumePercent {
                 volumePercent = volume
             }
+            queueState.alignToPlayingURI(refreshedState?.item?.uri)
             lastError = nil
             publishNowPlaying()
         } catch is CancellationError {
@@ -365,15 +408,31 @@ final class PlayerStore {
     }
 
     func play() async {
-        progressState.applyPlaybackStatus(isPlaying: true, at: Date())
-        publishNowPlaying()
-        await run { try await SpotifyClient.shared.command("PUT", "me/player/play") }
+        let epoch = beginPlaybackCommand()
+        let snapshot = capturePlaybackUI()
+        applyOptimisticPlaying(true)
+        await run(
+            coalesceKey: .play,
+            mutation: .setPlaying(true),
+            confirmViaExistingPoll: true,
+            revertOptimistic: { self.restorePlaybackUI(snapshot, ifEpoch: epoch) }
+        ) {
+            try await SpotifyClient.shared.command("PUT", "me/player/play")
+        }
     }
 
     func pause() async {
-        progressState.applyPlaybackStatus(isPlaying: false, at: Date())
-        publishNowPlaying()
-        await run { try await SpotifyClient.shared.command("PUT", "me/player/pause") }
+        let epoch = beginPlaybackCommand()
+        let snapshot = capturePlaybackUI()
+        applyOptimisticPlaying(false)
+        await run(
+            coalesceKey: .pause,
+            mutation: .setPlaying(false),
+            confirmViaExistingPoll: true,
+            revertOptimistic: { self.restorePlaybackUI(snapshot, ifEpoch: epoch) }
+        ) {
+            try await SpotifyClient.shared.command("PUT", "me/player/pause")
+        }
     }
 
     func togglePlayPause() async {
@@ -400,12 +459,22 @@ final class PlayerStore {
     }
 
     func next() async {
-        let mutation = PlaybackMutation.skipForward(
-            previousURI: state?.item?.uri,
-            expectedNextURI: queue.first?.uri
-        )
-        await run(mutation: mutation) {
-            try await SpotifyClient.shared.command("POST", "me/player/next")
+        await submitPlaybackWork(coalesceKey: .next) {
+            let snapshot = self.capturePlaybackUI()
+            let epoch = self.beginPlaybackCommand()
+            let mutation = PlaybackMutation.skipForward(
+                previousURI: self.state?.item?.uri,
+                expectedNextURI: self.queue.first?.uri
+            )
+            self.applyOptimisticSkipForward()
+            self.armSkipPollGuard(mutation)
+            await self.performSerializedCommand(
+                mutation: mutation,
+                confirmViaExistingPoll: true,
+                revertOptimistic: { self.restorePlaybackUI(snapshot, ifEpoch: epoch) }
+            ) {
+                try await SpotifyClient.shared.command("POST", "me/player/next")
+            }
         }
     }
 
@@ -438,13 +507,35 @@ final class PlayerStore {
     }
 
     func previous() async {
-        await run(mutation: .skipBack(previousURI: state?.item?.uri)) {
-            try await SpotifyClient.shared.command("POST", "me/player/previous")
+        // Previous always POSTs to Spotify (#12). The bar confirms from that
+        // HTTP in the general case: restore the last track this bar already
+        // showed, or restart the current item at 0. No GET /me/player, no stack.
+        await submitPlaybackWork(coalesceKey: .previous) {
+            let snapshot = self.capturePlaybackUI()
+            let epoch = self.beginPlaybackCommand()
+            let mutation = PlaybackMutation.skipBack(previousURI: self.state?.item?.uri)
+            let restoredTrack = self.applyOptimisticPrevious()
+            self.armSkipPollGuard(mutation)
+            await self.performSerializedCommand(
+                mutation: mutation,
+                confirmViaExistingPoll: restoredTrack,
+                revertOptimistic: { self.restorePlaybackUI(snapshot, ifEpoch: epoch) }
+            ) {
+                try await SpotifyClient.shared.command("POST", "me/player/previous")
+            }
         }
     }
 
     func setShuffle(_ enabled: Bool) async {
-        await run(mutation: .shuffle(enabled: enabled)) {
+        let epoch = beginPlaybackCommand()
+        let snapshot = capturePlaybackUI()
+        applyOptimisticShuffle(enabled)
+        await run(
+            coalesceKey: .shuffle(enabled: enabled),
+            mutation: .shuffle(enabled: enabled),
+            confirmViaExistingPoll: true,
+            revertOptimistic: { self.restorePlaybackUI(snapshot, ifEpoch: epoch) }
+        ) {
             try await SpotifyClient.shared.command(
                 "PUT", "me/player/shuffle", query: ["state": enabled ? "true" : "false"])
         }
@@ -459,6 +550,8 @@ final class PlayerStore {
         let expectedTrackID = expectedTrackID ?? currentTrackIdentifier
         guard expectedTrackID == currentTrackIdentifier else { return }
 
+        let snapshot = capturePlaybackUI()
+        let epoch = beginPlaybackCommand()
         let now = Date()
         let isPlaying = progressState.isPlaying
         progressState.applyLocalSeek(
@@ -468,46 +561,48 @@ final class PlayerStore {
             isPlaying: isPlaying,
             at: now
         )
+        publishNowPlaying()
 
         seekRequestID += 1
         let requestID = seekRequestID
         let normalizedPosition = progressState.progress(at: now)
         guard expectedTrackID == currentTrackIdentifier else {
-            progressState.cancelPendingSeek()
+            restorePlaybackUI(snapshot)
             return
         }
 
-        do {
+        await run(
+            coalesceKey: .seek(positionMs: normalizedPosition, expectedTrackID: expectedTrackID),
+            revertOptimistic: {
+                guard requestID == self.seekRequestID else { return }
+                self.restorePlaybackUI(snapshot, ifEpoch: epoch)
+            }
+        ) {
             try await SpotifyClient.shared.command(
                 "PUT",
                 "me/player/seek",
                 query: ["position_ms": String(normalizedPosition)]
             )
-            guard requestID == seekRequestID else { return }
-            lastError = nil
-            try? await Task.sleep(for: .milliseconds(350))
-            await refresh()
-        } catch is CancellationError {
-            if requestID == seekRequestID {
-                progressState.cancelPendingSeek()
-            }
-        } catch {
-            guard requestID == seekRequestID else { return }
-            progressState.cancelPendingSeek()
-            if isDeadSession(error) {
-                haltForDeadSession()
-                return
-            }
-            lastError = friendlyMessage(for: error)
-            await refresh()
+            guard requestID == self.seekRequestID else { return }
         }
     }
 
     func setVolume(_ percent: Int) async {
-        volumePercent = min(100, max(0, percent))
-        await run(refreshAfter: false) {
-            try await SpotifyClient.shared.command("PUT", "me/player/volume",
-                                                   query: ["volume_percent": String(volumePercent)])
+        let next = min(100, max(0, percent))
+        let previous = volumePercent
+        let epoch = beginPlaybackCommand()
+        volumePercent = next
+        await run(
+            coalesceKey: .volume(percent: next),
+            revertOptimistic: {
+                guard epoch == self.playbackCommandEpoch, self.volumePercent == next else { return }
+                self.volumePercent = previous
+            }
+        ) {
+            try await SpotifyClient.shared.command(
+                "PUT", "me/player/volume",
+                query: ["volume_percent": String(next)]
+            )
         }
     }
 
@@ -627,6 +722,10 @@ final class PlayerStore {
         playbackSyncTask?.cancel()
         playbackSyncTask = nil
         stopPolling()
+        clearPollConfirmation()
+        skipPollGuard.reset()
+        lastBarTrack = nil
+        clearPlaybackWorkQueue()
         stopLocalPlayback()
         wipeLibrespotCredentials(for: currentSpotifyUserID ?? consentStore.lastSignedInUserID)
         consentStore.clearLastSignedInUser()
@@ -717,7 +816,7 @@ final class PlayerStore {
 
     private func nextPollIntervalSeconds() -> Int? {
         PlaybackPollingPolicy.intervalSeconds(
-            isPlaying: state?.isPlaying ?? false,
+            isPlaying: isPlaying,
             isSceneActive: isSceneActive,
             isLocalDeviceActive: isLocalDeviceActive
         )
@@ -732,27 +831,318 @@ final class PlayerStore {
     }
 
     private func run(
+        coalesceKey: PlaybackCommand? = nil,
         mutation: PlaybackMutation? = nil,
-        refreshAfter: Bool = true,
-        _ operation: () async throws -> Void
+        confirmViaExistingPoll: Bool = false,
+        revertOptimistic: (() -> Void)? = nil,
+        operation: @escaping () async throws -> Void
     ) async {
+        await submitPlaybackWork(coalesceKey: coalesceKey) {
+            await self.performSerializedCommand(
+                mutation: mutation,
+                confirmViaExistingPoll: confirmViaExistingPoll,
+                revertOptimistic: revertOptimistic,
+                operation: operation
+            )
+        }
+    }
+
+    private func submitPlaybackWork(
+        coalesceKey: PlaybackCommand?,
+        work: @escaping () async -> Void
+    ) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            if let coalesceKey {
+                if let last = playbackWorkItems.last, last.coalesceKey == coalesceKey {
+                    last.continuations.append(continuation)
+                    return
+                }
+                if playbackWorkItems.isEmpty,
+                   let inFlight = inFlightPlaybackItem,
+                   inFlight.coalesceKey == coalesceKey {
+                    inFlight.continuations.append(continuation)
+                    return
+                }
+                if let last = playbackWorkItems.last,
+                   let lastKey = last.coalesceKey,
+                   coalesceKey.supersedes(lastKey) {
+                    last.coalesceKey = coalesceKey
+                    last.work = work
+                    last.continuations.append(continuation)
+                    if let inFlightKey = inFlightPlaybackItem?.coalesceKey,
+                       coalesceKey.supersedes(inFlightKey) {
+                        inFlightPlaybackTask?.cancel()
+                    }
+                    return
+                }
+                if let inFlightKey = inFlightPlaybackItem?.coalesceKey,
+                   coalesceKey.supersedes(inFlightKey) {
+                    inFlightPlaybackTask?.cancel()
+                }
+            }
+            playbackWorkItems.append(
+                PlaybackWorkItem(
+                    coalesceKey: coalesceKey,
+                    continuations: [continuation],
+                    work: work
+                )
+            )
+            Task { await self.drainPlaybackWork() }
+        }
+    }
+
+    /// Sign-out: cancel the in-flight command and drop queued ones. Their
+    /// callers resume immediately; nothing else is sent to Spotify.
+    private func clearPlaybackWorkQueue() {
+        inFlightPlaybackTask?.cancel()
+        let pending = playbackWorkItems
+        playbackWorkItems.removeAll()
+        for item in pending {
+            for continuation in item.continuations {
+                continuation.resume()
+            }
+        }
+    }
+
+    private func drainPlaybackWork() async {
+        guard !isDrainingPlaybackWork else { return }
+        isDrainingPlaybackWork = true
+        isPlaybackCommandInFlight = true
+        defer {
+            isDrainingPlaybackWork = false
+            isPlaybackCommandInFlight = false
+            inFlightPlaybackItem = nil
+            inFlightPlaybackTask = nil
+        }
+        while !playbackWorkItems.isEmpty {
+            let item = playbackWorkItems.removeFirst()
+            inFlightPlaybackItem = item
+            let task = Task { await item.work() }
+            inFlightPlaybackTask = task
+            await task.value
+            inFlightPlaybackTask = nil
+            inFlightPlaybackItem = nil
+            for continuation in item.continuations {
+                continuation.resume()
+            }
+        }
+    }
+
+    private func performSerializedCommand(
+        mutation: PlaybackMutation?,
+        confirmViaExistingPoll: Bool,
+        revertOptimistic: (() -> Void)?,
+        operation: () async throws -> Void
+    ) async {
+        invalidateInFlightRemoteReads()
+        // Drop the previous command's poll mutation so a leftover skipForward
+        // filter cannot swallow Previous's catch-up poll. The skip URI guard
+        // is armed by next/previous themselves and lives on the UI snapshot.
+        clearPollConfirmation()
+        if confirmViaExistingPoll, let mutation {
+            pendingPollConfirmation = mutation
+            let interval = nextPollIntervalSeconds()
+                ?? PlaybackPollingPolicy.foregroundIdleIntervalSeconds
+            pendingPollConfirmationDeadline = PlaybackQueueSync.confirmationDeadline(
+                now: Date(),
+                pollIntervalSeconds: interval
+            )
+        }
+        var operationCompleted = false
         do {
+            try Task.checkCancellation()
             try await operation()
+            operationCompleted = true
             lastError = nil
+            invalidateInFlightRemoteReads()
+            // A superseded POST that already got HTTP 204 must not confirm the
+            // mutation, but the server did apply it: keep the optimistic UI and
+            // let the next command / poll settle the truth.
+            try Task.checkCancellation()
             if let mutation {
+                armSkipPollGuard(mutation)
+            }
+            if let mutation, mutation.requiresPlaybackAndQueueSync, !confirmViaExistingPoll {
                 await synchronizePlaybackAndQueue(after: mutation)
-            } else if refreshAfter {
-                try? await Task.sleep(for: PlaybackQueueSync.propagationDelay)
-                await refresh()
             }
         } catch is CancellationError {
-            return
+            invalidateInFlightRemoteReads()
+            if !operationCompleted {
+                clearPollConfirmation()
+                revertOptimistic?()
+                publishNowPlaying()
+            }
         } catch {
+            invalidateInFlightRemoteReads()
+            clearPollConfirmation()
+            revertOptimistic?()
+            publishNowPlaying()
             if isDeadSession(error) {
                 haltForDeadSession()
                 return
             }
             lastError = friendlyMessage(for: error)
+        }
+    }
+
+    private func invalidateInFlightRemoteReads() {
+        remoteApplyGeneration += 1
+    }
+
+    private func clearPollConfirmation() {
+        pendingPollConfirmation = nil
+        pendingPollConfirmationDeadline = nil
+    }
+
+    private func armSkipPollGuard(_ mutation: PlaybackMutation) {
+        skipPollGuard.record(
+            leaving: mutation.playingURIToIgnoreAfterSuccess,
+            nowPlaying: state?.item?.uri,
+            at: Date()
+        )
+    }
+
+    private func beginPlaybackCommand() -> Int {
+        playbackCommandEpoch += 1
+        return playbackCommandEpoch
+    }
+
+    private struct PlaybackUISnapshot {
+        var state: PlaybackState?
+        var progressState: PlaybackProgressState
+        var volumePercent: Int
+        var queueState: QueueRefreshState
+        var skipPollGuard: PlaybackQueueSync.SkipPollGuard
+        var lastBarTrack: Track?
+        var pendingPollConfirmation: PlaybackMutation?
+        var pendingPollConfirmationDeadline: Date?
+    }
+
+    private func capturePlaybackUI() -> PlaybackUISnapshot {
+        PlaybackUISnapshot(
+            state: state,
+            progressState: progressState,
+            volumePercent: volumePercent,
+            queueState: queueState,
+            skipPollGuard: skipPollGuard,
+            lastBarTrack: lastBarTrack,
+            pendingPollConfirmation: pendingPollConfirmation,
+            pendingPollConfirmationDeadline: pendingPollConfirmationDeadline
+        )
+    }
+
+    private func restorePlaybackUI(_ snapshot: PlaybackUISnapshot, ifEpoch epoch: Int) {
+        guard epoch == playbackCommandEpoch else { return }
+        restorePlaybackUI(snapshot)
+    }
+
+    private func restorePlaybackUI(_ snapshot: PlaybackUISnapshot) {
+        state = snapshot.state
+        progressState = snapshot.progressState
+        volumePercent = snapshot.volumePercent
+        queueState = snapshot.queueState
+        skipPollGuard = snapshot.skipPollGuard
+        lastBarTrack = snapshot.lastBarTrack
+        pendingPollConfirmation = snapshot.pendingPollConfirmation
+        pendingPollConfirmationDeadline = snapshot.pendingPollConfirmationDeadline
+    }
+
+    private func applyOptimisticPlaying(_ playing: Bool) {
+        progressState.applyPlaybackStatus(isPlaying: playing, at: Date())
+        if let current = state {
+            state = current.applying(isPlaying: playing)
+        }
+        publishNowPlaying()
+    }
+
+    private func applyOptimisticShuffle(_ enabled: Bool) {
+        if let current = state {
+            state = current.applying(shuffleState: enabled)
+        }
+        publishNowPlaying()
+    }
+
+    private func rememberLastBarTrack(leaving: Track?) {
+        guard let leaving else { return }
+        lastBarTrack = leaving
+    }
+
+    private func applyOptimisticSkipForward() {
+        guard let upcoming = queue.first else { return }
+        rememberLastBarTrack(leaving: state?.item)
+        if let current = state {
+            state = current.applying(item: upcoming, replaceItem: true, progressMs: 0)
+        }
+        progressState.applyRemoteState(
+            trackID: upcoming.id ?? upcoming.uri,
+            durationMs: upcoming.durationMs,
+            progressMs: 0,
+            isPlaying: progressState.isPlaying,
+            receivedAt: Date()
+        )
+        queueState.applyOptimisticSkipForward()
+        queueLoadTask?.cancel()
+        publishNowPlaying()
+    }
+
+    /// Returns true when the bar restored a track it already showed.
+    private func applyOptimisticPrevious() -> Bool {
+        let current = state?.item
+        if PlaybackQueueSync.shouldRestoreLastDisplayedTrack(
+            lastDisplayedURI: lastBarTrack?.uri,
+            currentURI: current?.uri
+        ), let previous = lastBarTrack {
+            lastBarTrack = nil
+            if let state {
+                self.state = state.applying(item: previous, replaceItem: true, progressMs: 0)
+            }
+            progressState.applyRemoteState(
+                trackID: previous.id ?? previous.uri,
+                durationMs: previous.durationMs,
+                progressMs: 0,
+                isPlaying: progressState.isPlaying,
+                receivedAt: Date()
+            )
+            queueState.applyOptimisticSkipBack(returning: previous, leaving: current)
+            queueLoadTask?.cancel()
+            publishNowPlaying()
+            return true
+        }
+        applyOptimisticPreviousRestart()
+        return false
+    }
+
+    /// General case (idle, play, pause): confirm Previous on the current item
+    /// at 0. POST is the confirmation; the existing poll may catch up a
+    /// different URI later without the command waiting on it.
+    private func applyOptimisticPreviousRestart() {
+        guard let current = state?.item else { return }
+        if let state {
+            self.state = state.applying(progressMs: 0)
+        }
+        progressState.applyRemoteState(
+            trackID: current.id ?? current.uri,
+            durationMs: current.durationMs,
+            progressMs: 0,
+            isPlaying: progressState.isPlaying,
+            receivedAt: Date()
+        )
+        publishNowPlaying()
+    }
+
+    private final class PlaybackWorkItem {
+        var coalesceKey: PlaybackCommand?
+        var continuations: [CheckedContinuation<Void, Never>]
+        var work: () async -> Void
+
+        init(
+            coalesceKey: PlaybackCommand?,
+            continuations: [CheckedContinuation<Void, Never>],
+            work: @escaping () async -> Void
+        ) {
+            self.coalesceKey = coalesceKey
+            self.continuations = continuations
+            self.work = work
         }
     }
 
@@ -792,6 +1182,7 @@ final class PlayerStore {
             let response: QueueResponse = try await SpotifyClient.shared.get("me/player/queue")
             var nextState = queueState
             nextState.applySuccess(generation: generation, response: response)
+            nextState.alignToPlayingURI(state?.item?.uri)
             queueState = nextState
         } catch is CancellationError {
             var nextState = queueState
@@ -848,5 +1239,29 @@ final class PlayerStore {
             for: userID,
             applicationSupport: applicationSupport
         )
+    }
+}
+
+enum PlaybackCommand: Equatable {
+    case play
+    case pause
+    case next
+    case previous
+    case seek(positionMs: Int, expectedTrackID: String?)
+    case volume(percent: Int)
+    case shuffle(enabled: Bool)
+
+    /// A newer command replaces an in-flight POST instead of waiting for it.
+    func supersedes(_ inFlight: PlaybackCommand) -> Bool {
+        switch (inFlight, self) {
+        case (.seek, .seek), (.volume, .volume), (.shuffle, .shuffle):
+            return true
+        case (.play, .pause), (.pause, .play):
+            return true
+        case (.next, .previous), (.previous, .next):
+            return true
+        default:
+            return false
+        }
     }
 }
