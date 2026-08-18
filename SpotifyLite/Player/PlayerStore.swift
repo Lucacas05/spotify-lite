@@ -183,12 +183,6 @@ final class PlayerStore {
     /// Now Playing uses this id, not the advertised name "SpotifyLite".
     private(set) var localDeviceID: String?
     private(set) var lastConfirmedDeviceID: String?
-    /// Per-account opt-in from #16. This supervisor starts only when the
-    /// reason is `.explicitOptIn` **and** this flag is true. Default true so
-    /// the existing "Play on this Mac" / Retry path remains that explicit
-    /// opt-in until #16 wires the consent store (it will set this false until
-    /// the account grants). 404, sign-in, and discovery never call `start()`.
-    private(set) var hasLocalPlaybackConsent = true
 
     init(nowPlaying: NowPlayingBridge? = nil) {
         self.nowPlaying = nowPlaying ?? NowPlayingBridge()
@@ -447,21 +441,15 @@ final class PlayerStore {
         }
     }
 
-    /// Starts the local librespot engine only from explicit opt-in.
-    /// #16 owns per-account consent: `hasLocalPlaybackConsent` is that flag.
+    /// Existing #16 path: "Play on this Mac" / Retry is the only start.
     /// 404 / no-device / locator success never call this.
     func playOnThisMac() async {
-        guard LocalPlaybackStartPolicy.shouldLaunchLibrespot(
-            for: .explicitOptIn,
-            hasAccountConsent: hasLocalPlaybackConsent
-        ) else { return }
         guard let device = await ensureLocalDevice() else { return }
         await transferPlayback(to: device)
         reconcilePolling()
     }
 
-    /// Starts librespot only after `playOnThisMac` passed the #16 start policy.
-    /// Locator success here does not itself decide to launch.
+    /// Called only from `playOnThisMac`. Locator success does not launch.
     private func ensureLocalDevice() async -> Device? {
         await localEngine.start()
         guard localEngine.isRunning else {

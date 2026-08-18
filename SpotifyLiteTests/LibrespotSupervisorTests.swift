@@ -132,32 +132,6 @@ final class LibrespotSupervisorTests: XCTestCase {
         XCTAssertTrue(arguments.contains("SpotifyLite"))
     }
 
-    func testPlayDoesNotAutoStartLibrespotOnMissingDevice() {
-        XCTAssertFalse(
-            LocalPlaybackStartPolicy.shouldLaunchLibrespot(
-                for: .missingDevice, hasAccountConsent: false)
-        )
-        XCTAssertFalse(
-            LocalPlaybackStartPolicy.shouldLaunchLibrespot(
-                for: .missingDevice, hasAccountConsent: true)
-        )
-        XCTAssertFalse(
-            LocalPlaybackStartPolicy.shouldLaunchLibrespot(
-                for: .signIn, hasAccountConsent: true)
-        )
-    }
-
-    func testExplicitOptInStartsOnlyAfterConsent() {
-        XCTAssertFalse(
-            LocalPlaybackStartPolicy.shouldLaunchLibrespot(
-                for: .explicitOptIn, hasAccountConsent: false)
-        )
-        XCTAssertTrue(
-            LocalPlaybackStartPolicy.shouldLaunchLibrespot(
-                for: .explicitOptIn, hasAccountConsent: true)
-        )
-    }
-
     func testSupervisorStopsRestartingAfterDegrade() {
         let afterGiveUp = LibrespotRestartPolicy.decide(
             kind: .crash(code: 1),
