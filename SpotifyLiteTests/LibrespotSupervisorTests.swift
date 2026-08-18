@@ -132,6 +132,12 @@ final class LibrespotSupervisorTests: XCTestCase {
         XCTAssertTrue(arguments.contains("SpotifyLite"))
     }
 
+    @MainActor
+    func testInlineConsentDefaultsTrueUntilAccountStoreLands() {
+        // Merge order with #16: default true is not a 404 auto-start.
+        XCTAssertTrue(PlayerStore().hasLocalPlaybackConsent)
+    }
+
     func testSupervisorStopsRestartingAfterDegrade() {
         let afterGiveUp = LibrespotRestartPolicy.decide(
             kind: .crash(code: 1),

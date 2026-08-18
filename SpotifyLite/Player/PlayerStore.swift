@@ -11,7 +11,8 @@ enum PlaybackPollingPolicy {
     }
 
     /// `nil` means polling should stop. Background polling continues at 30 s
-    /// only while the last confirmed active device is SpotifyLite.
+    /// only while the last confirmed active Connect **device id** is the local
+    /// librespot device. Same 5 s / 30 s playback poll; not a second Now Playing loop.
     static func intervalSeconds(
         isPlaying: Bool,
         isSceneActive: Bool,
@@ -183,6 +184,10 @@ final class PlayerStore {
     /// Now Playing uses this id, not the advertised name "SpotifyLite".
     private(set) var localDeviceID: String?
     private(set) var lastConfirmedDeviceID: String?
+    /// Per-account store lands in #16 (PR #29). Until then this defaults true
+    /// so Play on this Mac / Retry can start. That is merge order, not a 404
+    /// auto-start: `playContext` never calls `start()`.
+    private(set) var hasLocalPlaybackConsent = true
 
     init(nowPlaying: NowPlayingBridge? = nil) {
         self.nowPlaying = nowPlaying ?? NowPlayingBridge()
@@ -444,12 +449,14 @@ final class PlayerStore {
     /// Existing #16 path: "Play on this Mac" / Retry is the only start.
     /// 404 / no-device / locator success never call this.
     func playOnThisMac() async {
+        guard hasLocalPlaybackConsent else { return }
         guard let device = await ensureLocalDevice() else { return }
         await transferPlayback(to: device)
         reconcilePolling()
     }
 
-    /// Called only from `playOnThisMac`. Locator success does not launch.
+    /// Called only from `playOnThisMac` after the inline opt-in gate.
+    /// Locator success does not launch.
     private func ensureLocalDevice() async -> Device? {
         await localEngine.start()
         guard localEngine.isRunning else {
@@ -532,7 +539,8 @@ final class PlayerStore {
         }
         let expectedURI = trackURI ?? uris?.first
         await run(mutation: .play(expectedURI: expectedURI)) {
-            // 404 / no active device must not start librespot (#16, PERFORMANCE.md).
+            // Never launch on 404 / no-device. Consent defaulting true until
+            // #16 merges is merge order on playOnThisMac, not this path.
             try await SpotifyClient.shared.command("PUT", "me/player/play", body: body.isEmpty ? nil : body)
         }
     }
