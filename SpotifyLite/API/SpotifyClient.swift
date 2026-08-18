@@ -14,16 +14,38 @@ struct UserProfile: Decodable {
     }
 }
 
+enum SpotifyHTTPRetryPolicy {
+    static let maxRateLimitRetries = 2
+
+    /// GET/PUT may retry. Non-idempotent POSTs (Add to Queue, next, previous)
+    /// must not be replayed.
+    static func shouldRetryRateLimit(method: String, retryCount: Int) -> Bool {
+        guard retryCount < maxRateLimitRetries else { return false }
+        return method.uppercased() != "POST"
+    }
+
+    static func retryAfterSeconds(from header: String?) -> TimeInterval {
+        max(Double(header ?? "") ?? 1, 0)
+    }
+}
+
 enum SpotifyAPIError: LocalizedError {
     case notSignedIn
     case http(Int, String)
     case emptyResponse
+    case sessionExpired
+
+    static let sessionExpiredMessage = "Tu sesión expiró. Vuelve a iniciar sesión."
+    static let rateLimitedMessage = "Spotify está limitando las peticiones. Espera un momento e inténtalo de nuevo."
 
     var errorDescription: String? {
         switch self {
         case .notSignedIn: return "There is no active session."
-        case .http(let code, let body): return "Spotify responded \(code): \(body)"
+        case .http(let code, let body):
+            if code == 429 { return Self.rateLimitedMessage }
+            return "Spotify responded \(code): \(body)"
         case .emptyResponse: return "Spotify returned no data."
+        case .sessionExpired: return Self.sessionExpiredMessage
         }
     }
 
@@ -32,6 +54,15 @@ enum SpotifyAPIError: LocalizedError {
         if case .http(404, _) = self { return true }
         return false
     }
+
+    var isSessionExpired: Bool {
+        if case .sessionExpired = self { return true }
+        return false
+    }
+}
+
+extension Notification.Name {
+    static let spotifySessionInvalidated = Notification.Name("com.lucas.spotifylite.sessionInvalidated")
 }
 
 /// Web API HTTP layer. Actor: serializes refresh so two requests with an
@@ -41,6 +72,8 @@ actor SpotifyClient {
 
     private let baseURL = URL(string: "https://api.spotify.com/v1")!
     private var refreshTask: Task<TokenSet, Error>?
+    private var sessionInvalidated = false
+    private var sessionEpoch = 0
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -49,6 +82,7 @@ actor SpotifyClient {
 
     /// Fresh access token for handing to the librespot child process.
     func validAccessToken() async throws -> String {
+        if sessionInvalidated { throw SpotifyAPIError.sessionExpired }
         guard var tokens = KeychainStore.load() else { throw SpotifyAPIError.notSignedIn }
         if tokens.isExpired {
             tokens = try await refreshTokens(tokens)
@@ -65,7 +99,8 @@ actor SpotifyClient {
 
     /// For endpoints that respond 204 with no body (GET /me/player when nothing is playing).
     func getOptional<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T? {
-        let data = try await send("GET", path: path, query: query, body: nil, allowRetry: true)
+        let data = try await send("GET", path: path, query: query, body: nil,
+                                  allowAuthRetry: true, rateLimitAttempt: 0)
         guard !data.isEmpty else { return nil }
         return try decoder.decode(T.self, from: data)
     }
@@ -73,11 +108,23 @@ actor SpotifyClient {
     /// PUT/POST player endpoints, which respond 200/202/204 with no useful body.
     func command(_ method: String, _ path: String,
                  query: [String: String] = [:], body: [String: Any]? = nil) async throws {
-        _ = try await send(method, path: path, query: query, body: body, allowRetry: true)
+        _ = try await send(method, path: path, query: query, body: body,
+                           allowAuthRetry: true, rateLimitAttempt: 0)
+    }
+
+    func resetSession() {
+        sessionEpoch += 1
+        sessionInvalidated = false
+        refreshTask?.cancel()
+        refreshTask = nil
     }
 
     private func send(_ method: String, path: String, query: [String: String],
-                      body: [String: Any]?, allowRetry: Bool) async throws -> Data {
+                      body: [String: Any]?, allowAuthRetry: Bool,
+                      rateLimitAttempt: Int) async throws -> Data {
+        if sessionInvalidated {
+            throw SpotifyAPIError.sessionExpired
+        }
         guard var tokens = KeychainStore.load() else { throw SpotifyAPIError.notSignedIn }
         if tokens.isExpired {
             tokens = try await refreshTokens(tokens)
@@ -104,30 +151,71 @@ actor SpotifyClient {
         switch http.statusCode {
         case 200...299:
             return data
-        case 401 where allowRetry:
+        case 401 where allowAuthRetry:
             _ = try await refreshTokens(tokens)
-            return try await send(method, path: path, query: query, body: body, allowRetry: false)
+            return try await send(method, path: path, query: query, body: body,
+                                  allowAuthRetry: false, rateLimitAttempt: rateLimitAttempt)
+        case 401:
+            invalidateSession()
+            throw SpotifyAPIError.sessionExpired
         case 429:
-            let retryAfter = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "1") ?? 1
-            try await Task.sleep(for: .seconds(retryAfter))
-            return try await send(method, path: path, query: query, body: body, allowRetry: allowRetry)
+            if SpotifyHTTPRetryPolicy.shouldRetryRateLimit(method: method, retryCount: rateLimitAttempt) {
+                let delay = SpotifyHTTPRetryPolicy.retryAfterSeconds(
+                    from: http.value(forHTTPHeaderField: "Retry-After"))
+                try await Task.sleep(for: .seconds(delay))
+                return try await send(method, path: path, query: query, body: body,
+                                      allowAuthRetry: allowAuthRetry,
+                                      rateLimitAttempt: rateLimitAttempt + 1)
+            }
+            throw SpotifyAPIError.http(429, String(data: data, encoding: .utf8) ?? "")
         default:
             throw SpotifyAPIError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
         }
     }
 
     private func refreshTokens(_ current: TokenSet) async throws -> TokenSet {
+        if sessionInvalidated { throw SpotifyAPIError.sessionExpired }
         if let refreshTask {
-            return try await refreshTask.value
+            return try await completeRefresh(refreshTask, epoch: sessionEpoch)
         }
         let clientID = UserDefaults.standard.string(forKey: SpotifyAuthConfig.clientIDDefaultsKey) ?? ""
+        let epoch = sessionEpoch
         let task = Task<TokenSet, Error> {
-            let fresh = try await TokenEndpoint.refresh(current, clientID: clientID)
-            try KeychainStore.save(fresh)
-            return fresh
+            try await TokenEndpoint.refresh(current, clientID: clientID)
         }
         refreshTask = task
         defer { refreshTask = nil }
-        return try await task.value
+        return try await completeRefresh(task, epoch: epoch)
+    }
+
+    private func completeRefresh(_ task: Task<TokenSet, Error>, epoch: Int) async throws -> TokenSet {
+        do {
+            let fresh = try await task.value
+            guard epoch == sessionEpoch, !sessionInvalidated else {
+                throw sessionInvalidated ? SpotifyAPIError.sessionExpired : CancellationError()
+            }
+            guard KeychainStore.load() != nil else { throw CancellationError() }
+            try KeychainStore.save(fresh)
+            return fresh
+        } catch let error as SpotifyAPIError {
+            throw error
+        } catch is CancellationError {
+            if sessionInvalidated { throw SpotifyAPIError.sessionExpired }
+            throw CancellationError()
+        } catch let error as AuthError where error.isDefinitiveRefreshFailure {
+            invalidateSession()
+            throw SpotifyAPIError.sessionExpired
+        } catch {
+            throw error
+        }
+    }
+
+    private func invalidateSession() {
+        guard !sessionInvalidated else { return }
+        sessionInvalidated = true
+        sessionEpoch += 1
+        refreshTask?.cancel()
+        refreshTask = nil
+        NotificationCenter.default.post(name: .spotifySessionInvalidated, object: nil)
     }
 }

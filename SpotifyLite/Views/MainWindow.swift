@@ -31,7 +31,9 @@ struct MainWindow: View {
                 }
             }
 
-            if let error = player.lastError {
+            if auth.isSessionExpired {
+                sessionExpiredBanner
+            } else if let error = player.lastError {
                 errorBanner(error)
             }
             PlayerBarView(player: player)
@@ -91,6 +93,9 @@ struct MainWindow: View {
         .onChange(of: scenePhase) { _, phase in
             player.setSceneActive(phase == .active)
         }
+        .onChange(of: auth.isSessionExpired) { _, expired in
+            if expired { player.haltForDeadSession() }
+        }
         .onDisappear { player.setSceneActive(false) }
     }
 
@@ -120,7 +125,7 @@ struct MainWindow: View {
                 Button("Dark") { appearance = "dark" }
             }
             Divider()
-            Button("Log out") { auth.logout() }
+            Button("Log out") { signOut() }
         } label: {
             HStack(spacing: 6) {
                 profileAvatar
@@ -186,6 +191,28 @@ struct MainWindow: View {
         case "dark": return .dark
         default: return nil
         }
+    }
+
+    private func signOut() {
+        player.handleSignOut()
+        auth.logout()
+    }
+
+    private var sessionExpiredBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(SpotifyAPIError.sessionExpiredMessage)
+                .font(.callout)
+                .lineLimit(2)
+            Spacer()
+            Button("Cerrar sesión") { signOut() }
+                .buttonStyle(.plain)
+                .fontWeight(.semibold)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.red.opacity(0.9))
     }
 
     private func errorBanner(_ message: String) -> some View {

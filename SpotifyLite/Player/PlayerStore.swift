@@ -173,6 +173,9 @@ final class PlayerStore {
 
     private var pollTask: Task<Void, Never>?
     private var pollGeneration = 0
+    private var localDeviceDiscoveryTask: Task<Device?, Never>?
+    /// Dead session: stop scene network work without looking still logged-in-and-retrying.
+    private var haltSceneNetwork = false
     private var progressState = PlaybackProgressState()
     private var seekRequestID = 0
     private var queueState = QueueRefreshState()
@@ -222,19 +225,22 @@ final class PlayerStore {
             // A background 30 s poll may be mid-sleep; restart so the
             // foreground 5 s cadence applies immediately.
             stopPolling()
+        } else {
+            cancelLocalDeviceDiscovery()
         }
         reconcilePolling()
     }
 
     func startPolling() {
+        guard !haltSceneNetwork else { return }
         guard pollTask == nil else { return }
         guard nextPollIntervalSeconds() != nil else { return }
         pollGeneration += 1
         let generation = pollGeneration
         pollTask = Task {
-            while !Task.isCancelled {
+            while !Task.isCancelled && !haltSceneNetwork {
                 await refresh()
-                guard let seconds = nextPollIntervalSeconds() else { break }
+                guard !haltSceneNetwork, let seconds = nextPollIntervalSeconds() else { break }
                 try? await Task.sleep(for: .seconds(seconds))
             }
             if pollGeneration == generation {
@@ -250,6 +256,7 @@ final class PlayerStore {
     }
 
     func refresh() async {
+        if haltSceneNetwork { return }
         do {
             let refreshedState: PlaybackState? = try await SpotifyClient.shared.getOptional("me/player")
             state = refreshedState
@@ -267,14 +274,29 @@ final class PlayerStore {
             }
             lastError = nil
             publishNowPlaying()
+        } catch is CancellationError {
+            return
         } catch {
-            lastError = error.localizedDescription
+            if isDeadSession(error) {
+                haltForDeadSession()
+                return
+            }
+            lastError = friendlyMessage(for: error)
         }
     }
 
     func loadDevices() async {
-        let response: DevicesResponse? = try? await SpotifyClient.shared.getOptional("me/player/devices")
-        devices = response?.devices ?? []
+        if haltSceneNetwork { return }
+        do {
+            let response: DevicesResponse? = try await SpotifyClient.shared.getOptional("me/player/devices")
+            devices = response?.devices ?? []
+        } catch is CancellationError {
+            return
+        } catch {
+            if isDeadSession(error) {
+                haltForDeadSession()
+            }
+        }
     }
 
     func play() async {
@@ -407,6 +429,10 @@ final class PlayerStore {
         } catch {
             guard requestID == seekRequestID else { return }
             progressState.cancelPendingSeek()
+            if isDeadSession(error) {
+                haltForDeadSession()
+                return
+            }
             lastError = friendlyMessage(for: error)
             await refresh()
         }
@@ -447,8 +473,21 @@ final class PlayerStore {
     /// Starts librespot (if needed) and waits until it registers as a Connect
     /// device. Returns the device, or nil after setting `lastError`.
     private func ensureLocalDevice() async -> Device? {
+        cancelLocalDeviceDiscovery()
+        let task = Task<Device?, Never> { await self.performLocalDeviceDiscovery() }
+        localDeviceDiscoveryTask = task
+        let device = await task.value
+        if localDeviceDiscoveryTask == task {
+            localDeviceDiscoveryTask = nil
+        }
+        return device
+    }
+
+    private func performLocalDeviceDiscovery() async -> Device? {
+        if haltSceneNetwork || Task.isCancelled { return nil }
         await localEngine.start()
         guard localEngine.isRunning else {
+            if Task.isCancelled || haltSceneNetwork { return nil }
             if localEngine.isNotInstalled {
                 // Missing binary is a setup task, not an error: show the
                 // install sheet instead of the red banner.
@@ -464,6 +503,7 @@ final class PlayerStore {
         // the browser that librespot's OAuth flow just opened.
         let attempts = localEngine.needsAuthorization ? 60 : 10
         for attempt in 0..<attempts {
+            if Task.isCancelled || haltSceneNetwork { return nil }
             await loadDevices()
             if let device = devices.first(where: { $0.name == LibrespotEngine.deviceName }) {
                 return device
@@ -471,6 +511,7 @@ final class PlayerStore {
             if !localEngine.isRunning { break }
             try? await Task.sleep(for: .seconds(attempt == 0 ? 1.5 : 1))
         }
+        if Task.isCancelled || haltSceneNetwork { return nil }
         if case .failed(let message) = localEngine.status {
             lastError = message
         } else {
@@ -494,12 +535,34 @@ final class PlayerStore {
         return false
     }
 
+    /// Stops scene-owned work immediately. Does not wait for in-flight tasks
+    /// to drain. Playback mutations belong to the command that started them.
     func handleSignOut() {
-        stopLocalPlayback()
+        haltSceneNetwork = false
+        cancelLocalDeviceDiscovery()
+        queueLoadTask?.cancel()
+        queueLoadTask = nil
+        playbackSyncTask?.cancel()
+        playbackSyncTask = nil
         stopPolling()
+        stopLocalPlayback()
         state = nil
         lastConfirmedDeviceName = nil
+        lastError = nil
         nowPlaying.clear()
+    }
+
+    /// Dead OAuth session: cancel poll and discovery and move on. Does not
+    /// sign the user out — the #13 banner owns logout.
+    func haltForDeadSession() {
+        haltSceneNetwork = true
+        cancelLocalDeviceDiscovery()
+        stopPolling()
+    }
+
+    private func cancelLocalDeviceDiscovery() {
+        localDeviceDiscoveryTask?.cancel()
+        localDeviceDiscoveryTask = nil
     }
 
     func play(contextURI: String?, trackURI: String? = nil) async {
@@ -602,7 +665,13 @@ final class PlayerStore {
                 try? await Task.sleep(for: PlaybackQueueSync.propagationDelay)
                 await refresh()
             }
+        } catch is CancellationError {
+            return
         } catch {
+            if isDeadSession(error) {
+                haltForDeadSession()
+                return
+            }
             lastError = friendlyMessage(for: error)
         }
     }
@@ -649,25 +718,40 @@ final class PlayerStore {
             nextState.cancel(generation: generation)
             queueState = nextState
         } catch {
+            if isDeadSession(error) {
+                haltForDeadSession()
+            }
             var nextState = queueState
             nextState.applyFailure(generation: generation, message: friendlyMessage(for: error))
             queueState = nextState
         }
     }
 
+    private func isDeadSession(_ error: Error) -> Bool {
+        (error as? SpotifyAPIError)?.isSessionExpired == true
+    }
+
     private func friendlyMessage(for error: Error) -> String {
-        if let apiError = error as? SpotifyAPIError,
-           case .http(let status, _) = apiError {
-            switch status {
-            case 401: return "Your Spotify session expired. Log out and sign in again."
-            case 403: return "Spotify rejected playback control. Check that your account is Premium and that a device is active."
-            case 404: return "No active Spotify device. Open Spotify on a device and try again."
-            default: break
+        if let apiError = error as? SpotifyAPIError {
+            if apiError.isSessionExpired {
+                return SpotifyAPIError.sessionExpiredMessage
+            }
+            if case .http(let status, _) = apiError {
+                switch status {
+                case 401: return SpotifyAPIError.sessionExpiredMessage
+                case 403: return "Spotify rechazó el control de reproducción. Necesitas una cuenta Premium."
+                case 404: return "No hay ningún dispositivo activo. Abre Spotify en un dispositivo o reproduce en esta Mac."
+                case 429: return SpotifyAPIError.rateLimitedMessage
+                default: break
+                }
             }
         }
-        if (error as? URLError) != nil {
-            return "No connection to Spotify. Check your internet connection."
+        if error is URLError {
+            return "Sin conexión a internet. Revisa tu red e inténtalo de nuevo."
         }
-        return error.localizedDescription
+        if error is LocalizedError || error is AuthError {
+            return error.localizedDescription
+        }
+        return "No se pudo cargar. Inténtalo de nuevo."
     }
 }
