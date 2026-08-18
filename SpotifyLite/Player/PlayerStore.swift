@@ -188,6 +188,9 @@ final class PlayerStore {
     private var remoteApplyGeneration = 0
     private var pendingPollConfirmation: PlaybackMutation?
     private var pendingPollConfirmationDeadline: Date?
+    /// Survives a later play/pause pending mutation. Polls that still report
+    /// this URI must not undo a skip.
+    private var ignoreStalePlayingURI: String?
     private(set) var isPlaybackCommandInFlight = false
 
     var queue: [Track] { queueState.upcoming }
@@ -269,21 +272,23 @@ final class PlayerStore {
         do {
             let refreshedState: PlaybackState? = try await SpotifyClient.shared.getOptional("me/player")
             guard generation == remoteApplyGeneration else { return }
-            if let mutation = pendingPollConfirmation,
-               let deadline = pendingPollConfirmationDeadline {
-                let snapshot = PlaybackQueueSnapshot(
-                    playback: refreshedState,
-                    currentlyPlaying: queueState.currentlyPlaying,
-                    upcoming: queueState.upcoming
-                )
-                if !PlaybackQueueSync.shouldApplyRemote(
-                    snapshot, after: mutation, now: Date(), deadline: deadline
-                ) {
-                    return
-                }
+            let snapshot = PlaybackQueueSnapshot(
+                playback: refreshedState,
+                currentlyPlaying: queueState.currentlyPlaying,
+                upcoming: queueState.upcoming
+            )
+            if !PlaybackQueueSync.shouldApplyPlaybackPoll(
+                snapshot,
+                pendingMutation: pendingPollConfirmation,
+                ignoringPlayingURI: ignoreStalePlayingURI,
+                now: Date(),
+                deadline: pendingPollConfirmationDeadline
+            ) {
+                return
             }
             pendingPollConfirmation = nil
             pendingPollConfirmationDeadline = nil
+            ignoreStalePlayingURI = nil
             state = refreshedState
             updateLastConfirmedDeviceName(from: refreshedState)
             let now = Date()
@@ -297,6 +302,7 @@ final class PlayerStore {
             if let volume = refreshedState?.device?.volumePercent {
                 volumePercent = volume
             }
+            queueState.alignToPlayingURI(refreshedState?.item?.uri)
             lastError = nil
             publishNowPlaying()
         } catch {
@@ -368,6 +374,7 @@ final class PlayerStore {
                 previousURI: self.state?.item?.uri,
                 expectedNextURI: self.queue.first?.uri
             )
+            self.armSkipPollGuard(mutation)
             self.applyOptimisticSkipForward()
             await self.performSerializedCommand(
                 mutation: mutation,
@@ -411,9 +418,14 @@ final class PlayerStore {
         // Previous delegates to Spotify. There is no local history stack (#12).
         // Confirmation is the mutation HTTP result, not a later GET /me/player.
         await submitPlaybackWork(coalesceKey: .previous) {
+            let snapshot = self.capturePlaybackUI()
+            let epoch = self.beginPlaybackCommand()
+            let mutation = PlaybackMutation.skipBack(previousURI: self.state?.item?.uri)
+            self.armSkipPollGuard(mutation)
             await self.performSerializedCommand(
-                mutation: .skipBack(previousURI: self.state?.item?.uri),
-                confirmViaExistingPoll: false
+                mutation: mutation,
+                confirmViaExistingPoll: false,
+                revertOptimistic: { self.restorePlaybackUI(snapshot, ifEpoch: epoch) }
             ) {
                 try await SpotifyClient.shared.command("POST", "me/player/previous")
             }
@@ -578,6 +590,7 @@ final class PlayerStore {
         stopLocalPlayback()
         stopPolling()
         clearPollConfirmation()
+        ignoreStalePlayingURI = nil
         state = nil
         lastConfirmedDeviceName = nil
         nowPlaying.clear()
@@ -761,19 +774,28 @@ final class PlayerStore {
         operation: () async throws -> Void
     ) async {
         invalidateInFlightRemoteReads()
+        // Drop the previous command's poll mutation so a leftover skipForward
+        // filter cannot swallow Previous's catch-up poll. The skip URI guard
+        // is armed by next/previous themselves and lives on the UI snapshot.
+        clearPollConfirmation()
+        if confirmViaExistingPoll, let mutation {
+            pendingPollConfirmation = mutation
+            let interval = nextPollIntervalSeconds()
+                ?? PlaybackPollingPolicy.foregroundIdleIntervalSeconds
+            pendingPollConfirmationDeadline = PlaybackQueueSync.confirmationDeadline(
+                now: Date(),
+                pollIntervalSeconds: interval
+            )
+        }
         do {
             try Task.checkCancellation()
             try await operation()
+            // A superseded POST that already got HTTP 204 must not confirm.
+            try Task.checkCancellation()
             lastError = nil
             invalidateInFlightRemoteReads()
-            if confirmViaExistingPoll, let mutation {
-                pendingPollConfirmation = mutation
-                let interval = nextPollIntervalSeconds()
-                    ?? PlaybackPollingPolicy.foregroundIdleIntervalSeconds
-                pendingPollConfirmationDeadline = PlaybackQueueSync.confirmationDeadline(
-                    now: Date(),
-                    pollIntervalSeconds: interval
-                )
+            if let mutation {
+                armSkipPollGuard(mutation)
             }
             if let mutation, mutation.requiresPlaybackAndQueueSync, !confirmViaExistingPoll {
                 await synchronizePlaybackAndQueue(after: mutation)
@@ -799,6 +821,12 @@ final class PlayerStore {
         pendingPollConfirmationDeadline = nil
     }
 
+    private func armSkipPollGuard(_ mutation: PlaybackMutation) {
+        if let uri = mutation.playingURIToIgnoreAfterSuccess {
+            ignoreStalePlayingURI = uri
+        }
+    }
+
     private func beginPlaybackCommand() -> Int {
         playbackCommandEpoch += 1
         return playbackCommandEpoch
@@ -809,6 +837,9 @@ final class PlayerStore {
         var progressState: PlaybackProgressState
         var volumePercent: Int
         var queueState: QueueRefreshState
+        var ignoreStalePlayingURI: String?
+        var pendingPollConfirmation: PlaybackMutation?
+        var pendingPollConfirmationDeadline: Date?
     }
 
     private func capturePlaybackUI() -> PlaybackUISnapshot {
@@ -816,7 +847,10 @@ final class PlayerStore {
             state: state,
             progressState: progressState,
             volumePercent: volumePercent,
-            queueState: queueState
+            queueState: queueState,
+            ignoreStalePlayingURI: ignoreStalePlayingURI,
+            pendingPollConfirmation: pendingPollConfirmation,
+            pendingPollConfirmationDeadline: pendingPollConfirmationDeadline
         )
     }
 
@@ -830,6 +864,9 @@ final class PlayerStore {
         progressState = snapshot.progressState
         volumePercent = snapshot.volumePercent
         queueState = snapshot.queueState
+        ignoreStalePlayingURI = snapshot.ignoreStalePlayingURI
+        pendingPollConfirmation = snapshot.pendingPollConfirmation
+        pendingPollConfirmationDeadline = snapshot.pendingPollConfirmationDeadline
     }
 
     private func applyOptimisticPlaying(_ playing: Bool) {
@@ -860,6 +897,7 @@ final class PlayerStore {
             receivedAt: Date()
         )
         queueState.applyOptimisticSkipForward()
+        queueLoadTask?.cancel()
         publishNowPlaying()
     }
 
@@ -915,6 +953,7 @@ final class PlayerStore {
             let response: QueueResponse = try await SpotifyClient.shared.get("me/player/queue")
             var nextState = queueState
             nextState.applySuccess(generation: generation, response: response)
+            nextState.alignToPlayingURI(state?.item?.uri)
             queueState = nextState
         } catch is CancellationError {
             var nextState = queueState

@@ -231,6 +231,141 @@ final class QueueReliabilityTests: XCTestCase {
 
         XCTAssertEqual(state.currentlyPlaying?.uri, next.uri)
         XCTAssertEqual(state.upcoming.map(\.uri), [later.uri])
+        XCTAssertEqual(state.generation, generation + 1)
+        XCTAssertFalse(state.isLoading)
+
+        state.applySuccess(
+            generation: generation,
+            response: QueueResponse(currentlyPlaying: current, queue: [next, later])
+        )
+        XCTAssertEqual(state.currentlyPlaying?.uri, next.uri)
+        XCTAssertEqual(state.upcoming.map(\.uri), [later.uri])
+    }
+
+    func testQueueAlignsToThePlayerBarWithoutInventingOrder() {
+        var state = QueueRefreshState()
+        let current = track("one")
+        let next = track("two")
+        let later = track("three")
+        let generation = state.beginRefresh(force: false)!
+        state.applySuccess(
+            generation: generation,
+            response: QueueResponse(currentlyPlaying: current, queue: [next, later])
+        )
+
+        state.alignToPlayingURI(next.uri)
+        XCTAssertEqual(state.currentlyPlaying?.uri, next.uri)
+        XCTAssertEqual(state.upcoming.map(\.uri), [later.uri])
+
+        state.alignToPlayingURI("spotify:track:shuffled")
+        XCTAssertEqual(state.currentlyPlaying?.uri, next.uri)
+        XCTAssertEqual(state.upcoming.map(\.uri), [later.uri])
+    }
+
+    func testOptimisticSkipDiscardsInFlightQueueFetch() {
+        var state = QueueRefreshState()
+        let current = track("one")
+        let next = track("two")
+        let loaded = state.beginRefresh(force: false)!
+        state.applySuccess(
+            generation: loaded,
+            response: QueueResponse(currentlyPlaying: current, queue: [next])
+        )
+        let inFlight = state.beginRefresh(force: true)!
+        XCTAssertTrue(state.isLoading)
+
+        state.applyOptimisticSkipForward()
+        state.applySuccess(
+            generation: inFlight,
+            response: QueueResponse(currentlyPlaying: current, queue: [next])
+        )
+
+        XCTAssertEqual(state.currentlyPlaying?.uri, next.uri)
+        XCTAssertTrue(state.upcoming.isEmpty)
+        XCTAssertFalse(state.isLoading)
+    }
+
+    func testStaleSkipPollIsIgnoredEvenWhenALaterPlayPauseIsPending() {
+        let skip = PlaybackMutation.skipForward(
+            previousURI: "spotify:track:one",
+            expectedNextURI: "spotify:track:two"
+        )
+        let stale = PlaybackQueueSnapshot(playingURI: "spotify:track:one", isPlaying: false)
+        let empty = PlaybackQueueSnapshot()
+        let caughtUp = PlaybackQueueSnapshot(playingURI: "spotify:track:two", isPlaying: false)
+        let now = Date(timeIntervalSince1970: 1_000)
+        let deadline = PlaybackQueueSync.confirmationDeadline(now: now, pollIntervalSeconds: 5)
+
+        XCTAssertEqual(skip.playingURIToIgnoreAfterSuccess, "spotify:track:one")
+        XCTAssertFalse(
+            PlaybackQueueSync.shouldApplyPlaybackPoll(
+                stale,
+                pendingMutation: .setPlaying(false),
+                ignoringPlayingURI: skip.playingURIToIgnoreAfterSuccess,
+                now: now,
+                deadline: deadline
+            )
+        )
+        XCTAssertFalse(
+            PlaybackQueueSync.shouldApplyPlaybackPoll(
+                empty,
+                pendingMutation: .setPlaying(false),
+                ignoringPlayingURI: skip.playingURIToIgnoreAfterSuccess,
+                now: deadline,
+                deadline: deadline
+            )
+        )
+        XCTAssertTrue(
+            PlaybackQueueSync.shouldApplyPlaybackPoll(
+                caughtUp,
+                pendingMutation: .setPlaying(false),
+                ignoringPlayingURI: skip.playingURIToIgnoreAfterSuccess,
+                now: now,
+                deadline: deadline
+            )
+        )
+    }
+
+    func testPreviousConfirmsFromMutationHTTPAndIgnoresStalePolls() {
+        let previous = PlaybackMutation.skipBack(previousURI: "spotify:track:two")
+        XCTAssertFalse(previous.requiresPlaybackAndQueueSync)
+        XCTAssertEqual(previous.playingURIToIgnoreAfterSuccess, "spotify:track:two")
+
+        let stillOnCurrent = PlaybackQueueSnapshot(playingURI: "spotify:track:two")
+        let caughtUp = PlaybackQueueSnapshot(playingURI: "spotify:track:one")
+        let now = Date(timeIntervalSince1970: 1_000)
+        let deadline = PlaybackQueueSync.confirmationDeadline(now: now, pollIntervalSeconds: 5)
+
+        XCTAssertFalse(
+            PlaybackQueueSync.shouldApplyPlaybackPoll(
+                stillOnCurrent,
+                pendingMutation: nil,
+                ignoringPlayingURI: previous.playingURIToIgnoreAfterSuccess,
+                now: deadline,
+                deadline: deadline
+            )
+        )
+        XCTAssertTrue(
+            PlaybackQueueSync.shouldApplyPlaybackPoll(
+                caughtUp,
+                pendingMutation: nil,
+                ignoringPlayingURI: previous.playingURIToIgnoreAfterSuccess,
+                now: now,
+                deadline: nil
+            )
+        )
+        XCTAssertTrue(
+            PlaybackQueueSync.shouldApplyPlaybackPoll(
+                caughtUp,
+                pendingMutation: .skipForward(
+                    previousURI: "spotify:track:one",
+                    expectedNextURI: "spotify:track:two"
+                ),
+                ignoringPlayingURI: previous.playingURIToIgnoreAfterSuccess,
+                now: now,
+                deadline: deadline
+            )
+        )
     }
 
     func testNewerTransportCommandsSupersedeInFlightPosts() {
@@ -243,6 +378,7 @@ final class QueueReliabilityTests: XCTestCase {
         )
         XCTAssertFalse(PlaybackCommand.next.supersedes(.next))
         XCTAssertFalse(PlaybackCommand.pause.supersedes(.next))
+        XCTAssertFalse(PlaybackCommand.next.supersedes(.pause))
     }
 
     func testQueueRowActivationCannotStartIsolatedPlayback() {

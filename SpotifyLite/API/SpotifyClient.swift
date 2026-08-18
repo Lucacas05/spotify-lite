@@ -82,6 +82,7 @@ actor SpotifyClient {
         guard var tokens = KeychainStore.load() else { throw SpotifyAPIError.notSignedIn }
         if tokens.isExpired {
             tokens = try await refreshTokens(tokens)
+            try Task.checkCancellation()
         }
 
         var components = URLComponents(url: baseURL.appending(path: path),
@@ -99,19 +100,25 @@ actor SpotifyClient {
 
         try Task.checkCancellation()
         let (data, response) = try await URLSession.shared.data(for: request)
+        try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
         }
 
         switch http.statusCode {
         case 200...299:
+            try Task.checkCancellation()
             return data
         case 401 where allowRetry:
+            try Task.checkCancellation()
             _ = try await refreshTokens(tokens)
+            try Task.checkCancellation()
             return try await send(method, path: path, query: query, body: body, allowRetry: false)
         case 429:
+            try Task.checkCancellation()
             let retryAfter = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "1") ?? 1
             try await Task.sleep(for: .seconds(retryAfter))
+            try Task.checkCancellation()
             return try await send(method, path: path, query: query, body: body, allowRetry: allowRetry)
         default:
             throw SpotifyAPIError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")

@@ -134,5 +134,25 @@ struct QueueRefreshState {
         guard let next = upcoming.first else { return }
         currentlyPlaying = next
         upcoming.removeFirst()
+        discardInFlightRefresh()
+    }
+
+    /// Drop upcoming rows until the player-bar URI is currently playing.
+    /// No-op when that URI is not in the snapshot — we do not invent order.
+    mutating func alignToPlayingURI(_ uri: String?) {
+        guard let uri else { return }
+        if currentlyPlaying?.uri == uri { return }
+        guard let index = upcoming.firstIndex(where: { $0.uri == uri }) else { return }
+        currentlyPlaying = upcoming[index]
+        upcoming.removeFirst(index + 1)
+        discardInFlightRefresh()
+    }
+
+    /// A skip must not let an in-flight GET /me/player/queue restore the
+    /// track that just moved into the player bar.
+    mutating func discardInFlightRefresh() {
+        generation += 1
+        inFlightGeneration = nil
+        isLoading = false
     }
 }

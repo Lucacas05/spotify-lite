@@ -12,8 +12,8 @@ enum PlaybackMutation: Equatable {
     case transfer(deviceID: String)
 
     /// Queue-changing intents that still use the #11 playback/queue coordinator.
-    /// Transport commands (play/pause/next/previous/seek/volume/shuffle) confirm
-    /// from HTTP and wait for the existing poll instead.
+    /// Transport commands confirm from the mutation HTTP. They do not issue a
+    /// fresh GET /me/player; the existing poll catches up the UI.
     var requiresPlaybackAndQueueSync: Bool {
         switch self {
         case .addToQueue, .play, .transfer:
@@ -26,11 +26,17 @@ enum PlaybackMutation: Equatable {
     /// Successful next/previous are confirmed by the mutation HTTP. A later
     /// poll that still shows the previous track is stale, not a silent revert.
     var ignoresStalePollAfterSuccess: Bool {
+        playingURIToIgnoreAfterSuccess != nil
+    }
+
+    /// URI we just left. Polls that still report it must not undo a skip,
+    /// even if a later play/pause overwrites `pendingPollConfirmation`.
+    var playingURIToIgnoreAfterSuccess: String? {
         switch self {
-        case .skipForward, .skipBack:
-            return true
+        case .skipForward(let previousURI, _), .skipBack(let previousURI):
+            return previousURI
         case .play, .setPlaying, .addToQueue, .shuffle, .setVolume, .transfer:
-            return false
+            return nil
         }
     }
 }
@@ -86,6 +92,36 @@ enum PlaybackQueueSync {
     static let maxAttempts = 3
     static var propagationDelay: Duration { .milliseconds(400) }
     static var retryDelay: Duration { .milliseconds(350) }
+
+    /// Gate used by `PlayerStore.refresh()`. A skip URI stays ignored even
+    /// when the pending mutation is a later play/pause/seek.
+    static func shouldApplyPlaybackPoll(
+        _ snapshot: PlaybackQueueSnapshot,
+        pendingMutation: PlaybackMutation?,
+        ignoringPlayingURI: String?,
+        now: Date,
+        deadline: Date?
+    ) -> Bool {
+        var pendingMutation = pendingMutation
+        if let ignoringPlayingURI {
+            guard let reported = snapshot.reportedPlayingURI,
+                  reported != ignoringPlayingURI else {
+                return false
+            }
+            // Poll already left the skipped URI. A leftover skipForward
+            // mutation still looks "stale" against that old URI and must
+            // not block Previous (or another skip) from catching up.
+            if pendingMutation?.ignoresStalePollAfterSuccess == true {
+                pendingMutation = nil
+            }
+        }
+        guard let pendingMutation, let deadline else {
+            return true
+        }
+        return shouldApplyRemote(
+            snapshot, after: pendingMutation, now: now, deadline: deadline
+        )
+    }
 
     /// After HTTP success, the existing 5s/30s poll may catch up. A skip that
     /// already succeeded must not be undone by a superseded GET /me/player.
