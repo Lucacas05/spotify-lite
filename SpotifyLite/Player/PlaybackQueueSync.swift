@@ -161,6 +161,17 @@ enum PlaybackQueueSync {
         return now >= deadline
     }
 
+    /// Previous confirms the bar from POST. Restore the last distinct track
+    /// the bar already showed (poll, play, or next) — one slot, not a stack.
+    /// If the bar has only ever shown the current item, restart it at 0.
+    static func shouldRestoreLastDisplayedTrack(
+        lastDisplayedURI: String?,
+        currentURI: String?
+    ) -> Bool {
+        guard let lastDisplayedURI, let currentURI else { return false }
+        return lastDisplayedURI != currentURI
+    }
+
     static func confirmationDeadline(now: Date, pollIntervalSeconds: Int) -> Date {
         now.addingTimeInterval(TimeInterval(max(pollIntervalSeconds, 0)))
     }

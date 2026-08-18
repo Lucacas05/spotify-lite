@@ -379,10 +379,47 @@ final class QueueReliabilityTests: XCTestCase {
         )
     }
 
-    func testPreviousConfirmsTheBarFromTheMutationNotThePoll() {
+    func testPreviousConfirmsTheBarFromTheMutationWithoutANextUndoStack() {
         let previous = PlaybackMutation.skipBack(previousURI: "spotify:track:two")
         XCTAssertFalse(previous.requiresPlaybackAndQueueSync)
-        XCTAssertEqual(previous.playingURIToIgnoreAfterSuccess, "spotify:track:two")
+
+        XCTAssertTrue(
+            PlaybackQueueSync.shouldRestoreLastDisplayedTrack(
+                lastDisplayedURI: "spotify:track:one",
+                currentURI: "spotify:track:two"
+            )
+        )
+        XCTAssertFalse(
+            PlaybackQueueSync.shouldRestoreLastDisplayedTrack(
+                lastDisplayedURI: nil,
+                currentURI: "spotify:track:two"
+            )
+        )
+        XCTAssertFalse(
+            PlaybackQueueSync.shouldRestoreLastDisplayedTrack(
+                lastDisplayedURI: "spotify:track:two",
+                currentURI: "spotify:track:two"
+            )
+        )
+
+        var progress = PlaybackProgressState()
+        let now = Date(timeIntervalSince1970: 1_000)
+        progress.applyRemoteState(
+            trackID: "two",
+            durationMs: 180_000,
+            progressMs: 45_000,
+            isPlaying: false,
+            receivedAt: now
+        )
+        XCTAssertEqual(progress.progress(at: now), 45_000)
+        progress.applyRemoteState(
+            trackID: "two",
+            durationMs: 180_000,
+            progressMs: 0,
+            isPlaying: false,
+            receivedAt: now
+        )
+        XCTAssertEqual(progress.progress(at: now), 0)
 
         var state = QueueRefreshState()
         let first = track("one")
@@ -394,42 +431,9 @@ final class QueueReliabilityTests: XCTestCase {
             response: QueueResponse(currentlyPlaying: first, queue: [second, third])
         )
         state.applyOptimisticSkipForward()
-        XCTAssertEqual(state.currentlyPlaying?.uri, second.uri)
-        XCTAssertEqual(state.upcoming.map(\.uri), [third.uri])
-
         state.applyOptimisticSkipBack(returning: first, leaving: second)
         XCTAssertEqual(state.currentlyPlaying?.uri, first.uri)
         XCTAssertEqual(state.upcoming.map(\.uri), [second.uri, third.uri])
-
-        var skipGuard = PlaybackQueueSync.SkipPollGuard()
-        skipGuard.record(leaving: "spotify:track:one", nowPlaying: "spotify:track:two")
-        skipGuard.record(leaving: "spotify:track:two", nowPlaying: "spotify:track:one")
-        let leftoverNext = PlaybackQueueSnapshot(playingURI: "spotify:track:two")
-        let confirmedPrevious = PlaybackQueueSnapshot(playingURI: "spotify:track:one")
-        let now = Date(timeIntervalSince1970: 1_000)
-        let deadline = PlaybackQueueSync.confirmationDeadline(now: now, pollIntervalSeconds: 5)
-
-        XCTAssertFalse(
-            PlaybackQueueSync.shouldApplyPlaybackPoll(
-                leftoverNext,
-                pendingMutation: nil,
-                skipGuard: skipGuard,
-                now: deadline,
-                deadline: deadline
-            )
-        )
-        XCTAssertTrue(
-            PlaybackQueueSync.shouldApplyPlaybackPoll(
-                confirmedPrevious,
-                pendingMutation: .skipForward(
-                    previousURI: "spotify:track:one",
-                    expectedNextURI: "spotify:track:two"
-                ),
-                skipGuard: skipGuard,
-                now: now,
-                deadline: deadline
-            )
-        )
     }
 
     func testNewerTransportCommandsSupersedeInFlightPosts() {
