@@ -9,7 +9,9 @@
 /* Begin PBXBuildFile section */
 		0780D77CD686A367F5F958B9 /* PlayerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C45A2CB5D8B8E59953E31472 /* PlayerStore.swift */; };
 		0F9913C05AB895569941B7F3 /* PKCETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05277268A512262B73C7ACE6 /* PKCETests.swift */; };
+		F5B2C3D4E5F60718293A4B5C /* SpotifyHTTPRetryPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4A1B2C3D4E5F60718293A4B /* SpotifyHTTPRetryPolicyTests.swift */; };
 		126F5E3EF83A6884E266D353 /* NowPlayingBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5D47A7B08F6AFEBC4BDEE35 /* NowPlayingBridgeTests.swift */; };
+		75A0B69F5C270608AAB5250C /* LocalPlaybackConsentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C096459D3823753CF43EA0A /* LocalPlaybackConsentTests.swift */; };
 		18410B038C9F6851D95BD8B0 /* QueueReliabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E4B6D1DEFE6910DAD920AF3 /* QueueReliabilityTests.swift */; };
 		211FD99183A60C9F6EEA18F9 /* AlbumArtistViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 509D8701544055DD861B74B5 /* AlbumArtistViews.swift */; };
 		2307DD7FEB19F216F4E168B7 /* KeyboardController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DB7E4D7F2B4CEF20C7957F0 /* KeyboardController.swift */; };
@@ -38,6 +40,8 @@
 		98A031442E08A55B8AEBFFC5 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 359EB2BF5D9EB6481E849DA7 /* ContentView.swift */; };
 		9AFEC9374BEC5E47ABFF04B6 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34BD33DC508D2CD638AD29D8 /* LoginView.swift */; };
 		A1762DBACBA1C6D52674AFE6 /* LibrespotLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EAA4741E8A0EEEC9B8AB57B /* LibrespotLocator.swift */; };
+		7C4E1A92B83F50D6E1A2B3C4 /* LibrespotSupervisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D8E9F0A1B2C3D4E5F607182 /* LibrespotSupervisor.swift */; };
+		0F1E2D3C4B5A69788796A5B4 /* LibrespotSupervisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7B8C9D0E1F2A3B4C5D6E7F /* LibrespotSupervisorTests.swift */; };
 		A2EFCBB055FAA30F9CB7F272 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30381BAFB70C87DA33DE078A /* KeychainStore.swift */; };
 		BE89F97051C952234F316D9A /* MediaPlayer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D9CF93E1B6177CBE4EC8F5D0 /* MediaPlayer.framework */; };
 		C520A88851AF92A131627B98 /* LoopbackServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71204D452D792DCD63E0C2E5 /* LoopbackServer.swift */; };
@@ -45,6 +49,7 @@
 		C75E3F65B8B9F0F7D9DB97D8 /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93C76402F14F719C3A4BAE07 /* CommandPaletteView.swift */; };
 		CF28FE17CBDDACF43DBA6190 /* KeyboardSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDE3BF23DEDD7BE598F9505A /* KeyboardSupport.swift */; };
 		CF2B8940E24734D9F6539A19 /* LibrespotEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0232ED88A039CAFED39E2EA /* LibrespotEngine.swift */; };
+		749EA2693A24DD87B3A011A1 /* LocalPlaybackConsent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DE6A57BDFDF5BABB12BB449 /* LocalPlaybackConsent.swift */; };
 		D6FE1D09243062F1CA5610B0 /* SpotifyLiteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7216E8F8F9AE9A58FAB41C35 /* SpotifyLiteApp.swift */; };
 		D74A99DE1693F759FD8BF789 /* NowPlayingSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23FA53EFD7909106B04B2CC6 /* NowPlayingSnapshot.swift */; };
 		E3758094B6C6D31B05166BFB /* LibrespotProcessLifetimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 586DC42E63A8E7B2E7139B05 /* LibrespotProcessLifetimeTests.swift */; };
@@ -66,6 +71,7 @@
 /* Begin PBXFileReference section */
 		0456F23C79A984E1653DCF58 /* PlaybackQueueSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackQueueSync.swift; sourceTree = "<group>"; };
 		05277268A512262B73C7ACE6 /* PKCETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PKCETests.swift; sourceTree = "<group>"; };
+		E4A1B2C3D4E5F60718293A4B /* SpotifyHTTPRetryPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyHTTPRetryPolicyTests.swift; sourceTree = "<group>"; };
 		1B8939E15751B58C220DAD47 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		1E4B6D1DEFE6910DAD920AF3 /* QueueReliabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueReliabilityTests.swift; sourceTree = "<group>"; };
 		22D3B1A8CECBA27B852C1F65 /* PlaybackScrubberTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackScrubberTimeline.swift; sourceTree = "<group>"; };
@@ -81,6 +87,8 @@
 		359C776CFDCF0FFF39839A47 /* SpotifyModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyModelsTests.swift; sourceTree = "<group>"; };
 		359EB2BF5D9EB6481E849DA7 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		3EAA4741E8A0EEEC9B8AB57B /* LibrespotLocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrespotLocator.swift; sourceTree = "<group>"; };
+		2D8E9F0A1B2C3D4E5F607182 /* LibrespotSupervisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrespotSupervisor.swift; sourceTree = "<group>"; };
+		6A7B8C9D0E1F2A3B4C5D6E7F /* LibrespotSupervisorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrespotSupervisorTests.swift; sourceTree = "<group>"; };
 		4A4CA4F9B4C9B7B477F34426 /* PlaybackScrubberTimelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackScrubberTimelineTests.swift; sourceTree = "<group>"; };
 		509D8701544055DD861B74B5 /* AlbumArtistViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumArtistViews.swift; sourceTree = "<group>"; };
 		56AF369A4B73FEC53BEFCD78 /* LibrespotSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrespotSetupView.swift; sourceTree = "<group>"; };
@@ -96,6 +104,7 @@
 		89E02BD82F07E5BC64E96C9B /* KeyMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyMap.swift; sourceTree = "<group>"; };
 		93C76402F14F719C3A4BAE07 /* CommandPaletteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPaletteView.swift; sourceTree = "<group>"; };
 		A5D47A7B08F6AFEBC4BDEE35 /* NowPlayingBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingBridgeTests.swift; sourceTree = "<group>"; };
+		1C096459D3823753CF43EA0A /* LocalPlaybackConsentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPlaybackConsentTests.swift; sourceTree = "<group>"; };
 		ABC2E65CB873D2F7018E6372 /* NavigationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationModel.swift; sourceTree = "<group>"; };
 		B58A50085BB46CF03EF22500 /* MainWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindow.swift; sourceTree = "<group>"; };
 		B63F474CBD6B39BAFFFDA86D /* QueueSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueSnapshot.swift; sourceTree = "<group>"; };
@@ -106,6 +115,7 @@
 		CB002470E77DCF38F936FBC2 /* SpotifyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyClient.swift; sourceTree = "<group>"; };
 		CE6F0FEB2ACFC87D5087425D /* MenuBarPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarPlayerView.swift; sourceTree = "<group>"; };
 		D0232ED88A039CAFED39E2EA /* LibrespotEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrespotEngine.swift; sourceTree = "<group>"; };
+		4DE6A57BDFDF5BABB12BB449 /* LocalPlaybackConsent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPlaybackConsent.swift; sourceTree = "<group>"; };
 		D9CF93E1B6177CBE4EC8F5D0 /* MediaPlayer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MediaPlayer.framework; path = System/Library/Frameworks/MediaPlayer.framework; sourceTree = SDKROOT; };
 		DC6CD4FA711DEF66A4A1A3F7 /* TrackListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackListView.swift; sourceTree = "<group>"; };
 		E0BF5DB527462D214A76B2A2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -141,8 +151,11 @@
 				64C58DA9FB59AB3993254B54 /* KeyboardNavigationTests.swift */,
 				3561BC7666778B404BB8D8A1 /* LibrespotLocatorTests.swift */,
 				586DC42E63A8E7B2E7139B05 /* LibrespotProcessLifetimeTests.swift */,
+				6A7B8C9D0E1F2A3B4C5D6E7F /* LibrespotSupervisorTests.swift */,
 				A5D47A7B08F6AFEBC4BDEE35 /* NowPlayingBridgeTests.swift */,
+				1C096459D3823753CF43EA0A /* LocalPlaybackConsentTests.swift */,
 				05277268A512262B73C7ACE6 /* PKCETests.swift */,
+				E4A1B2C3D4E5F60718293A4B /* SpotifyHTTPRetryPolicyTests.swift */,
 				4A4CA4F9B4C9B7B477F34426 /* PlaybackScrubberTimelineTests.swift */,
 				1E4B6D1DEFE6910DAD920AF3 /* QueueReliabilityTests.swift */,
 				359C776CFDCF0FFF39839A47 /* SpotifyModelsTests.swift */,
@@ -236,8 +249,10 @@
 			isa = PBXGroup;
 			children = (
 				D0232ED88A039CAFED39E2EA /* LibrespotEngine.swift */,
+				4DE6A57BDFDF5BABB12BB449 /* LocalPlaybackConsent.swift */,
 				3EAA4741E8A0EEEC9B8AB57B /* LibrespotLocator.swift */,
 				860C3D2E553A92C8668F7DD3 /* LibrespotProcessLifetime.swift */,
+				2D8E9F0A1B2C3D4E5F607182 /* LibrespotSupervisor.swift */,
 				C48C4190118CBB2929448DC7 /* NowPlayingBridge.swift */,
 				23FA53EFD7909106B04B2CC6 /* NowPlayingSnapshot.swift */,
 				0456F23C79A984E1653DCF58 /* PlaybackQueueSync.swift */,
@@ -348,8 +363,10 @@
 				CF28FE17CBDDACF43DBA6190 /* KeyboardSupport.swift in Sources */,
 				A2EFCBB055FAA30F9CB7F272 /* KeychainStore.swift in Sources */,
 				CF2B8940E24734D9F6539A19 /* LibrespotEngine.swift in Sources */,
+				749EA2693A24DD87B3A011A1 /* LocalPlaybackConsent.swift in Sources */,
 				A1762DBACBA1C6D52674AFE6 /* LibrespotLocator.swift in Sources */,
 				6627AAD5F60A9DAE9B02C575 /* LibrespotProcessLifetime.swift in Sources */,
+				7C4E1A92B83F50D6E1A2B3C4 /* LibrespotSupervisor.swift in Sources */,
 				75CEB82AC0CC94505EA06029 /* LibrespotSetupView.swift in Sources */,
 				9AFEC9374BEC5E47ABFF04B6 /* LoginView.swift in Sources */,
 				C520A88851AF92A131627B98 /* LoopbackServer.swift in Sources */,
@@ -381,8 +398,11 @@
 				F22E9B4F563DC7402C43FF85 /* KeyboardNavigationTests.swift in Sources */,
 				74700BD0DBDC53B36E626F0B /* LibrespotLocatorTests.swift in Sources */,
 				E3758094B6C6D31B05166BFB /* LibrespotProcessLifetimeTests.swift in Sources */,
+				0F1E2D3C4B5A69788796A5B4 /* LibrespotSupervisorTests.swift in Sources */,
 				126F5E3EF83A6884E266D353 /* NowPlayingBridgeTests.swift in Sources */,
+				75A0B69F5C270608AAB5250C /* LocalPlaybackConsentTests.swift in Sources */,
 				0F9913C05AB895569941B7F3 /* PKCETests.swift in Sources */,
+				F5B2C3D4E5F60718293A4B5C /* SpotifyHTTPRetryPolicyTests.swift in Sources */,
 				6E6798E37089FF383ED82168 /* PlaybackScrubberTimelineTests.swift in Sources */,
 				18410B038C9F6851D95BD8B0 /* QueueReliabilityTests.swift in Sources */,
 				7D8C3D3E9D29B1C38C1AB203 /* SpotifyModelsTests.swift in Sources */,

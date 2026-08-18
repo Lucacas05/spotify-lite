@@ -31,7 +31,10 @@ struct MenuBarPlayerView: View {
                 }
                 Button("Hide menu bar icon") { menuBarEnabled = false }
                 Divider()
-                Button("Log out") { auth.logout() }
+                Button("Log out") {
+                    player.handleSignOut()
+                    auth.logout()
+                }
             } else {
                 Text("Open SpotifyLite to log in.")
                     .foregroundStyle(.secondary)

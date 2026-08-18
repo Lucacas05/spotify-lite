@@ -1,13 +1,6 @@
 import Foundation
 import Observation
 
-/// Wraps a local-engine failure so it survives `run`'s error handling with the
-/// specific cause instead of the generic "no active device" message.
-struct LocalPlaybackError: LocalizedError {
-    let message: String
-    var errorDescription: String? { message }
-}
-
 enum PlaybackPollingPolicy {
     static let foregroundPlayingIntervalSeconds = 5
     static let foregroundIdleIntervalSeconds = 30
@@ -18,7 +11,8 @@ enum PlaybackPollingPolicy {
     }
 
     /// `nil` means polling should stop. Background polling continues at 30 s
-    /// only while the last confirmed active device is SpotifyLite.
+    /// only while the last confirmed active Connect **device id** is the local
+    /// librespot device. Same 5 s / 30 s playback poll; not a second Now Playing loop.
     static func intervalSeconds(
         isPlaying: Bool,
         isSceneActive: Bool,
@@ -162,17 +156,24 @@ final class PlayerStore {
     private(set) var state: PlaybackState?
     private(set) var devices: [Device] = []
     var lastError: String?
-    /// True when local playback needs librespot installed — drives the setup sheet.
-    var localSetupNeeded = false
+    /// Consent / missing-binary sheet for opt-in local playback.
+    var localPlaybackSheetPresented = false
     /// Optimistic volume so keyboard +/- update the slider without waiting for poll.
     var volumePercent: Int = 50
 
     let localEngine = LibrespotEngine()
     @ObservationIgnored
     let nowPlaying: NowPlayingBridge
+    @ObservationIgnored
+    private let consentStore: LocalPlaybackConsentStore
+    @ObservationIgnored
+    private let applicationSupportURL: URL?
 
     private var pollTask: Task<Void, Never>?
     private var pollGeneration = 0
+    private var localDeviceDiscoveryTask: Task<Device?, Never>?
+    /// Dead session: stop scene network work without looking still logged-in-and-retrying.
+    private var haltSceneNetwork = false
     private var progressState = PlaybackProgressState()
     private var seekRequestID = 0
     private var queueState = QueueRefreshState()
@@ -202,17 +203,39 @@ final class PlayerStore {
     var queuePresentation: QueuePresentation { queueState.presentation }
 
     private var isSceneActive = false
-    private(set) var lastConfirmedDeviceName: String?
+    /// Connect device id of the librespot instance we launched. Ownership of
+    /// Now Playing uses this id, not the advertised name "SpotifyLite".
+    private(set) var localDeviceID: String?
+    private(set) var lastConfirmedDeviceID: String?
+    private(set) var currentSpotifyUserID: String?
+    private(set) var hasLocalPlaybackConsent = false
 
-    init(nowPlaying: NowPlayingBridge? = nil) {
+    init(
+        nowPlaying: NowPlayingBridge? = nil,
+        consentStore: LocalPlaybackConsentStore = LocalPlaybackConsentStore(),
+        applicationSupportURL: URL? = nil
+    ) {
         self.nowPlaying = nowPlaying ?? NowPlayingBridge()
+        self.consentStore = consentStore
+        self.applicationSupportURL = applicationSupportURL
+        self.currentSpotifyUserID = consentStore.lastSignedInUserID
+        self.localEngine.accountUserID = consentStore.lastSignedInUserID
+        if let userID = consentStore.lastSignedInUserID {
+            self.hasLocalPlaybackConsent = consentStore.hasConsent(for: userID)
+        }
         self.nowPlaying.onCommand = { [weak self] command in
             Task { await self?.handleNowPlayingCommand(command) }
         }
         // Surface asynchronous engine deaths (crash-restart budget exhausted)
         // as a banner; the app keeps working in remote-control mode.
         localEngine.onUnrecoverableFailure = { [weak self] message in
+            self?.forgetLocalPlaybackSession()
             self?.lastError = message
+            self?.publishNowPlaying()
+            self?.reconcilePolling()
+        }
+        localEngine.onProcessExited = { [weak self] in
+            self?.forgetLocalPlaybackSession()
             self?.publishNowPlaying()
             self?.reconcilePolling()
         }
@@ -231,7 +254,52 @@ final class PlayerStore {
     }
 
     var isLocalDeviceActive: Bool {
-        lastConfirmedDeviceName == LibrespotEngine.deviceName
+        NowPlayingEligibility.ownsActiveDevice(
+            activeDeviceID: lastConfirmedDeviceID,
+            localDeviceID: localDeviceID
+        )
+    }
+
+    var localPlaybackMenuTitle: String {
+        LocalPlaybackMenuCopy.itemTitle(
+            hasConsent: hasLocalPlaybackConsent,
+            isStarting: localEngine.status == .starting
+        )
+    }
+
+    /// Binds librespot cache and consent to this Spotify account. A different
+    /// user id is treated as an account switch: the previous cache is wiped.
+    func bindSpotifyAccount(_ userID: String) {
+        guard let id = LocalPlaybackConsentStore.normalizedUserID(userID) else { return }
+        if let previous = currentSpotifyUserID ?? consentStore.lastSignedInUserID, previous != id {
+            stopLocalPlayback()
+            wipeLibrespotCredentials(for: previous)
+            localPlaybackSheetPresented = false
+        } else {
+            // Drop the unscoped pre-#16 cache so it cannot be reused by accident.
+            wipeLibrespotCredentials(for: nil)
+        }
+        currentSpotifyUserID = id
+        localEngine.accountUserID = id
+        consentStore.rememberSignedInUser(id)
+        hasLocalPlaybackConsent = consentStore.hasConsent(for: id)
+    }
+
+    func grantLocalPlaybackConsent() {
+        guard let currentSpotifyUserID else { return }
+        consentStore.grantConsent(for: currentSpotifyUserID)
+        hasLocalPlaybackConsent = true
+    }
+
+    @discardableResult
+    func resolveSpotifyAccount() async -> Bool {
+        if currentSpotifyUserID != nil { return true }
+        guard let profile: UserProfile = try? await SpotifyClient.shared.get("me") else {
+            lastError = LibrespotAccountCacheError.missingSpotifyAccount.localizedDescription
+            return false
+        }
+        bindSpotifyAccount(profile.id)
+        return currentSpotifyUserID != nil
     }
 
     func setSceneActive(_ active: Bool) {
@@ -242,19 +310,22 @@ final class PlayerStore {
             // A background 30 s poll may be mid-sleep; restart so the
             // foreground 5 s cadence applies immediately.
             stopPolling()
+        } else {
+            cancelLocalDeviceDiscovery()
         }
         reconcilePolling()
     }
 
     func startPolling() {
+        guard !haltSceneNetwork else { return }
         guard pollTask == nil else { return }
         guard nextPollIntervalSeconds() != nil else { return }
         pollGeneration += 1
         let generation = pollGeneration
         pollTask = Task {
-            while !Task.isCancelled {
+            while !Task.isCancelled && !haltSceneNetwork {
                 await refresh()
-                guard let seconds = nextPollIntervalSeconds() else { break }
+                guard !haltSceneNetwork, let seconds = nextPollIntervalSeconds() else { break }
                 try? await Task.sleep(for: .seconds(seconds))
             }
             if pollGeneration == generation {
@@ -270,6 +341,7 @@ final class PlayerStore {
     }
 
     func refresh() async {
+        if haltSceneNetwork { return }
         let generation = remoteApplyGeneration
         do {
             let refreshedState: PlaybackState? = try await SpotifyClient.shared.getOptional("me/player")
@@ -295,7 +367,7 @@ final class PlayerStore {
                 rememberLastBarTrack(leaving: state?.item)
             }
             state = refreshedState
-            updateLastConfirmedDeviceName(from: refreshedState)
+            updateLastConfirmedDevice(from: refreshedState)
             let now = Date()
             progressState.applyRemoteState(
                 trackID: refreshedState?.item?.id ?? refreshedState?.item?.uri,
@@ -310,14 +382,29 @@ final class PlayerStore {
             queueState.alignToPlayingURI(refreshedState?.item?.uri)
             lastError = nil
             publishNowPlaying()
+        } catch is CancellationError {
+            return
         } catch {
-            lastError = error.localizedDescription
+            if isDeadSession(error) {
+                haltForDeadSession()
+                return
+            }
+            lastError = friendlyMessage(for: error)
         }
     }
 
     func loadDevices() async {
-        let response: DevicesResponse? = try? await SpotifyClient.shared.getOptional("me/player/devices")
-        devices = response?.devices ?? []
+        if haltSceneNetwork { return }
+        do {
+            let response: DevicesResponse? = try await SpotifyClient.shared.getOptional("me/player/devices")
+            devices = response?.devices ?? []
+        } catch is CancellationError {
+            return
+        } catch {
+            if isDeadSession(error) {
+                haltForDeadSession()
+            }
+        }
     }
 
     func play() async {
@@ -535,23 +622,51 @@ final class PlayerStore {
         }
     }
 
-    /// Starts the local librespot engine and moves playback to this Mac, so the
-    /// app works standalone with no official Spotify client open anywhere.
+    /// Starts the local librespot engine only after this Spotify account has
+    /// consented. Without consent, or if the binary is missing, the sheet opens
+    /// instead of launching a process. This is the only path that starts
+    /// librespot; 404 / no-device / locator success never call it.
     func playOnThisMac() async {
+        guard await resolveSpotifyAccount() else { return }
+        let mayStart = LocalPlaybackStartPolicy.shouldLaunchLibrespot(
+            for: .explicitOptIn,
+            hasAccountConsent: hasLocalPlaybackConsent
+        )
+        guard mayStart else {
+            localPlaybackSheetPresented = true
+            return
+        }
+        guard LibrespotLocator.isInstalled else {
+            localPlaybackSheetPresented = true
+            return
+        }
         guard let device = await ensureLocalDevice() else { return }
         await transferPlayback(to: device)
         reconcilePolling()
     }
 
-    /// Starts librespot (if needed) and waits until it registers as a Connect
-    /// device. Returns the device, or nil after setting `lastError`.
+    /// Called only from `playOnThisMac` after the inline opt-in gate.
+    /// Locator success does not launch.
     private func ensureLocalDevice() async -> Device? {
+        cancelLocalDeviceDiscovery()
+        let task = Task<Device?, Never> { await self.performLocalDeviceDiscovery() }
+        localDeviceDiscoveryTask = task
+        let device = await task.value
+        if localDeviceDiscoveryTask == task {
+            localDeviceDiscoveryTask = nil
+        }
+        return device
+    }
+
+    private func performLocalDeviceDiscovery() async -> Device? {
+        if haltSceneNetwork || Task.isCancelled { return nil }
         await localEngine.start()
         guard localEngine.isRunning else {
+            if Task.isCancelled || haltSceneNetwork { return nil }
             if localEngine.isNotInstalled {
                 // Missing binary is a setup task, not an error: show the
-                // install sheet instead of the red banner.
-                localSetupNeeded = true
+                // consent/install sheet instead of the red banner.
+                localPlaybackSheetPresented = true
             } else if case .failed(let message) = localEngine.status {
                 lastError = message
             }
@@ -563,13 +678,16 @@ final class PlayerStore {
         // the browser that librespot's OAuth flow just opened.
         let attempts = localEngine.needsAuthorization ? 60 : 10
         for attempt in 0..<attempts {
+            if Task.isCancelled || haltSceneNetwork { return nil }
             await loadDevices()
-            if let device = devices.first(where: { $0.name == LibrespotEngine.deviceName }) {
+            if let device = localConnectDevice(from: devices) {
+                localDeviceID = device.id
                 return device
             }
             if !localEngine.isRunning { break }
             try? await Task.sleep(for: .seconds(attempt == 0 ? 1.5 : 1))
         }
+        if Task.isCancelled || haltSceneNetwork { return nil }
         if case .failed(let message) = localEngine.status {
             lastError = message
         } else {
@@ -580,6 +698,7 @@ final class PlayerStore {
 
     func stopLocalPlayback() {
         localEngine.stop()
+        forgetLocalPlaybackSession()
         publishNowPlaying()
         reconcilePolling()
     }
@@ -593,15 +712,44 @@ final class PlayerStore {
         return false
     }
 
+    /// Stops scene-owned work immediately. Does not wait for in-flight tasks
+    /// to drain. Playback mutations belong to the command that started them.
     func handleSignOut() {
-        stopLocalPlayback()
+        haltSceneNetwork = false
+        cancelLocalDeviceDiscovery()
+        queueLoadTask?.cancel()
+        queueLoadTask = nil
+        playbackSyncTask?.cancel()
+        playbackSyncTask = nil
         stopPolling()
         clearPollConfirmation()
         skipPollGuard.reset()
         lastBarTrack = nil
+        clearPlaybackWorkQueue()
+        stopLocalPlayback()
+        wipeLibrespotCredentials(for: currentSpotifyUserID ?? consentStore.lastSignedInUserID)
+        consentStore.clearLastSignedInUser()
+        currentSpotifyUserID = nil
+        localEngine.accountUserID = nil
+        hasLocalPlaybackConsent = false
+        localPlaybackSheetPresented = false
         state = nil
-        lastConfirmedDeviceName = nil
+        lastConfirmedDeviceID = nil
+        lastError = nil
         nowPlaying.clear()
+    }
+
+    /// Dead OAuth session: cancel poll and discovery and move on. Does not
+    /// sign the user out — the #13 banner owns logout.
+    func haltForDeadSession() {
+        haltSceneNetwork = true
+        cancelLocalDeviceDiscovery()
+        stopPolling()
+    }
+
+    private func cancelLocalDeviceDiscovery() {
+        localDeviceDiscoveryTask?.cancel()
+        localDeviceDiscoveryTask = nil
     }
 
     func play(contextURI: String?, trackURI: String? = nil) async {
@@ -628,25 +776,9 @@ final class PlayerStore {
             body["uris"] = [trackURI]
         }
         let expectedURI = trackURI ?? uris?.first
+        // 404 / no active device must not start librespot (issue #16, PERFORMANCE.md).
         await run(mutation: .play(expectedURI: expectedURI)) {
-            do {
-                try await SpotifyClient.shared.command("PUT", "me/player/play", body: body.isEmpty ? nil : body)
-            } catch let error as SpotifyAPIError where error.isNoActiveDevice {
-                // No active Connect device anywhere: fall back to the local
-                // librespot engine and target it explicitly.
-                guard let device = await ensureLocalDevice(), let deviceID = device.id else {
-                    // The setup sheet is already telling the user what to do;
-                    // a red banner on top would be noise.
-                    if localSetupNeeded { return }
-                    // ensureLocalDevice already set lastError to the real cause;
-                    // rethrowing the 404 would mask it behind the generic message.
-                    throw LocalPlaybackError(message: lastError ?? error.localizedDescription)
-                }
-                try await SpotifyClient.shared.command(
-                    "PUT", "me/player/play",
-                    query: ["device_id": deviceID],
-                    body: body.isEmpty ? nil : body)
-            }
+            try await SpotifyClient.shared.command("PUT", "me/player/play", body: body.isEmpty ? nil : body)
         }
     }
 
@@ -657,21 +789,29 @@ final class PlayerStore {
     private func publishNowPlaying() {
         nowPlaying.sync(
             isLocalEngineRunning: localEngine.isRunning,
-            activeDeviceName: state?.device?.name ?? lastConfirmedDeviceName,
+            activeDeviceID: state?.device?.id ?? lastConfirmedDeviceID,
+            localDeviceID: localDeviceID,
             track: state?.item,
             progressMs: progressState.progress(at: Date()),
             isPlaying: progressState.isPlaying
         )
     }
 
-    private func updateLastConfirmedDeviceName(from refreshedState: PlaybackState?) {
-        if let name = refreshedState?.device?.name {
-            lastConfirmedDeviceName = name
-        } else if refreshedState != nil {
-            lastConfirmedDeviceName = nil
-        } else if !localEngine.isRunning {
-            lastConfirmedDeviceName = nil
+    private func updateLastConfirmedDevice(from refreshedState: PlaybackState?) {
+        lastConfirmedDeviceID = PlaybackActiveDevice.confirmedID(from: refreshedState)
+    }
+
+    private func localConnectDevice(from devices: [Device]) -> Device? {
+        devices.first { device in
+            device.name == LibrespotEngine.deviceName && !(device.id ?? "").isEmpty
         }
+    }
+
+    private func forgetLocalPlaybackSession() {
+        if lastConfirmedDeviceID == localDeviceID {
+            lastConfirmedDeviceID = nil
+        }
+        localDeviceID = nil
     }
 
     private func nextPollIntervalSeconds() -> Int? {
@@ -751,6 +891,19 @@ final class PlayerStore {
         }
     }
 
+    /// Sign-out: cancel the in-flight command and drop queued ones. Their
+    /// callers resume immediately; nothing else is sent to Spotify.
+    private func clearPlaybackWorkQueue() {
+        inFlightPlaybackTask?.cancel()
+        let pending = playbackWorkItems
+        playbackWorkItems.removeAll()
+        for item in pending {
+            for continuation in item.continuations {
+                continuation.resume()
+            }
+        }
+    }
+
     private func drainPlaybackWork() async {
         guard !isDrainingPlaybackWork else { return }
         isDrainingPlaybackWork = true
@@ -795,13 +948,17 @@ final class PlayerStore {
                 pollIntervalSeconds: interval
             )
         }
+        var operationCompleted = false
         do {
             try Task.checkCancellation()
             try await operation()
-            // A superseded POST that already got HTTP 204 must not confirm.
-            try Task.checkCancellation()
+            operationCompleted = true
             lastError = nil
             invalidateInFlightRemoteReads()
+            // A superseded POST that already got HTTP 204 must not confirm the
+            // mutation, but the server did apply it: keep the optimistic UI and
+            // let the next command / poll settle the truth.
+            try Task.checkCancellation()
             if let mutation {
                 armSkipPollGuard(mutation)
             }
@@ -810,12 +967,20 @@ final class PlayerStore {
             }
         } catch is CancellationError {
             invalidateInFlightRemoteReads()
-            revertOptimistic?()
-            publishNowPlaying()
+            if !operationCompleted {
+                clearPollConfirmation()
+                revertOptimistic?()
+                publishNowPlaying()
+            }
         } catch {
             invalidateInFlightRemoteReads()
+            clearPollConfirmation()
             revertOptimistic?()
             publishNowPlaying()
+            if isDeadSession(error) {
+                haltForDeadSession()
+                return
+            }
             lastError = friendlyMessage(for: error)
         }
     }
@@ -832,7 +997,8 @@ final class PlayerStore {
     private func armSkipPollGuard(_ mutation: PlaybackMutation) {
         skipPollGuard.record(
             leaving: mutation.playingURIToIgnoreAfterSuccess,
-            nowPlaying: state?.item?.uri
+            nowPlaying: state?.item?.uri,
+            at: Date()
         )
     }
 
@@ -1023,26 +1189,56 @@ final class PlayerStore {
             nextState.cancel(generation: generation)
             queueState = nextState
         } catch {
+            if isDeadSession(error) {
+                haltForDeadSession()
+            }
             var nextState = queueState
             nextState.applyFailure(generation: generation, message: friendlyMessage(for: error))
             queueState = nextState
         }
     }
 
+    private func isDeadSession(_ error: Error) -> Bool {
+        (error as? SpotifyAPIError)?.isSessionExpired == true
+    }
+
     private func friendlyMessage(for error: Error) -> String {
-        if let apiError = error as? SpotifyAPIError,
-           case .http(let status, _) = apiError {
-            switch status {
-            case 401: return "Your Spotify session expired. Log out and sign in again."
-            case 403: return "Spotify rejected playback control. Check that your account is Premium and that a device is active."
-            case 404: return "No active Spotify device. Open Spotify on a device and try again."
-            default: break
+        if let apiError = error as? SpotifyAPIError {
+            if apiError.isSessionExpired {
+                return SpotifyAPIError.sessionExpiredMessage
+            }
+            if case .http(let status, _) = apiError {
+                switch status {
+                case 401: return SpotifyAPIError.sessionExpiredMessage
+                case 403: return "Spotify rechazó el control de reproducción. Necesitas una cuenta Premium."
+                case 404: return "No hay ningún dispositivo activo. Abre Spotify en un dispositivo o reproduce en esta Mac."
+                case 429: return SpotifyAPIError.rateLimitedMessage
+                default: break
+                }
             }
         }
-        if (error as? URLError) != nil {
-            return "No connection to Spotify. Check your internet connection."
+        if error is URLError {
+            return "Sin conexión a internet. Revisa tu red e inténtalo de nuevo."
         }
-        return error.localizedDescription
+        if error is LocalizedError || error is AuthError {
+            return error.localizedDescription
+        }
+        return "No se pudo cargar. Inténtalo de nuevo."
+    }
+
+    private func wipeLibrespotCredentials(for userID: String?) {
+        let applicationSupport: URL
+        if let applicationSupportURL {
+            applicationSupport = applicationSupportURL
+        } else if let resolved = try? LibrespotAccountCache.defaultApplicationSupport() {
+            applicationSupport = resolved
+        } else {
+            return
+        }
+        LibrespotAccountCache.wipeCredentials(
+            for: userID,
+            applicationSupport: applicationSupport
+        )
     }
 }
 

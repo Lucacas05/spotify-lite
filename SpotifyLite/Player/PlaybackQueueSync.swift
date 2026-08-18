@@ -96,32 +96,49 @@ enum PlaybackQueueSync {
     /// URIs the bar has already skipped past. A lagging GET /me/player that
     /// still reports one of them must not undo later skips.
     struct SkipPollGuard: Equatable {
-        private(set) var skippedURIs: Set<String> = []
+        /// A guard older than this no longer filters polls: if Spotify never
+        /// reports the skipped-to track (device went away, 204 forever), the
+        /// next poll must win instead of freezing the UI on the optimistic state.
+        static let maxAgeSeconds: TimeInterval = 10
 
-        mutating func record(leaving: String?, nowPlaying: String?) {
+        private(set) var skippedURIs: Set<String> = []
+        private(set) var armedAt: Date?
+
+        mutating func record(leaving: String?, nowPlaying: String?, at now: Date = Date()) {
             if let leaving, !leaving.isEmpty {
                 skippedURIs.insert(leaving)
             }
             if let nowPlaying {
                 skippedURIs.remove(nowPlaying)
             }
+            armedAt = skippedURIs.isEmpty ? nil : now
         }
 
         mutating func reset() {
             skippedURIs.removeAll()
+            armedAt = nil
         }
 
-        /// Empty payloads and any skipped URI are superseded, including an
-        /// older URI after two skips.
-        func isSupersededPoll(reportedPlayingURI: String?) -> Bool {
-            guard !skippedURIs.isEmpty else { return false }
+        var isArmed: Bool { !skippedURIs.isEmpty }
+
+        func isExpired(now: Date) -> Bool {
+            guard let armedAt else { return true }
+            return now.timeIntervalSince(armedAt) >= Self.maxAgeSeconds
+        }
+
+        /// True while the guard is armed and fresh: any skipped URI is
+        /// superseded (including an older URI after two skips), and so is an
+        /// empty payload. After `maxAgeSeconds` nothing is superseded.
+        func isSupersededPoll(reportedPlayingURI: String?, now: Date = Date()) -> Bool {
+            guard isArmed, !isExpired(now: now) else { return false }
             guard let reportedPlayingURI else { return true }
             return skippedURIs.contains(reportedPlayingURI)
         }
     }
 
     /// Gate used by `PlayerStore.refresh()`. Skipped URIs stay ignored even
-    /// when the pending mutation is a later play/pause/seek.
+    /// when the pending mutation is a later play/pause/seek — until the skip
+    /// guard expires.
     static func shouldApplyPlaybackPoll(
         _ snapshot: PlaybackQueueSnapshot,
         pendingMutation: PlaybackMutation?,
@@ -129,11 +146,12 @@ enum PlaybackQueueSync {
         now: Date,
         deadline: Date?
     ) -> Bool {
-        if skipGuard.isSupersededPoll(reportedPlayingURI: snapshot.reportedPlayingURI) {
+        if skipGuard.isSupersededPoll(reportedPlayingURI: snapshot.reportedPlayingURI, now: now) {
             return false
         }
         var pendingMutation = pendingMutation
-        if !skipGuard.skippedURIs.isEmpty, pendingMutation?.ignoresStalePollAfterSuccess == true {
+        if skipGuard.isArmed, !skipGuard.isExpired(now: now),
+           pendingMutation?.ignoresStalePollAfterSuccess == true {
             pendingMutation = nil
         }
         guard let pendingMutation, let deadline else {
@@ -156,7 +174,9 @@ enum PlaybackQueueSync {
             return true
         }
         if mutation.ignoresStalePollAfterSuccess {
-            return false
+            // A confirmed skip outlives the poll deadline, but not forever:
+            // after the grace period the poll is the truth again.
+            return now >= deadline.addingTimeInterval(SkipPollGuard.maxAgeSeconds)
         }
         return now >= deadline
     }

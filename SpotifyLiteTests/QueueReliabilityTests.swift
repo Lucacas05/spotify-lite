@@ -193,7 +193,50 @@ final class QueueReliabilityTests: XCTestCase {
         ))
     }
 
-    func testStaleSkipPollIsNotAppliedEvenAfterTheDeadline() {
+    func testSkipPollGuardExpiresSoAnEmptyPollCanWinAgain() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        var skipGuard = PlaybackQueueSync.SkipPollGuard()
+        skipGuard.record(leaving: "spotify:track:one", nowPlaying: "spotify:track:two", at: now)
+        let expired = now.addingTimeInterval(PlaybackQueueSync.SkipPollGuard.maxAgeSeconds)
+        let stale = PlaybackQueueSnapshot(playingURI: "spotify:track:one")
+        let empty = PlaybackQueueSnapshot()
+
+        XCTAssertTrue(skipGuard.isSupersededPoll(reportedPlayingURI: nil, now: now))
+        XCTAssertFalse(skipGuard.isSupersededPoll(reportedPlayingURI: nil, now: expired))
+        XCTAssertFalse(skipGuard.isSupersededPoll(reportedPlayingURI: "spotify:track:one", now: expired))
+
+        // A 204 / nil poll after the guard expired is applied even while a
+        // later play/pause is still pending confirmation.
+        let deadline = PlaybackQueueSync.confirmationDeadline(now: now, pollIntervalSeconds: 5)
+        XCTAssertFalse(
+            PlaybackQueueSync.shouldApplyPlaybackPoll(
+                empty, pendingMutation: .setPlaying(false), skipGuard: skipGuard, now: now, deadline: deadline
+            )
+        )
+        XCTAssertTrue(
+            PlaybackQueueSync.shouldApplyPlaybackPoll(
+                empty, pendingMutation: .setPlaying(false), skipGuard: skipGuard, now: expired, deadline: deadline
+            )
+        )
+        // A stale skip confirmation stops rejecting once the grace period is over.
+        let skip = PlaybackMutation.skipForward(previousURI: "spotify:track:one", expectedNextURI: "spotify:track:two")
+        XCTAssertFalse(
+            PlaybackQueueSync.shouldApplyPlaybackPoll(
+                stale, pendingMutation: skip, skipGuard: skipGuard, now: deadline, deadline: deadline
+            )
+        )
+        XCTAssertTrue(
+            PlaybackQueueSync.shouldApplyPlaybackPoll(
+                stale, pendingMutation: skip, skipGuard: skipGuard,
+                now: deadline.addingTimeInterval(PlaybackQueueSync.SkipPollGuard.maxAgeSeconds),
+                deadline: deadline
+            )
+        )
+        skipGuard.reset()
+        XCTAssertFalse(skipGuard.isArmed)
+    }
+
+    func testStaleSkipPollIsNotAppliedUntilTheGracePeriodEnds() {
         let skip = PlaybackMutation.skipForward(
             previousURI: "spotify:track:one",
             expectedNextURI: "spotify:track:two"
@@ -210,6 +253,13 @@ final class QueueReliabilityTests: XCTestCase {
         )
         XCTAssertFalse(
             PlaybackQueueSync.shouldApplyRemote(stale, after: skip, now: deadline, deadline: deadline)
+        )
+        XCTAssertTrue(
+            PlaybackQueueSync.shouldApplyRemote(
+                stale, after: skip,
+                now: deadline.addingTimeInterval(PlaybackQueueSync.SkipPollGuard.maxAgeSeconds),
+                deadline: deadline
+            )
         )
         XCTAssertTrue(
             PlaybackQueueSync.shouldApplyRemote(caughtUp, after: skip, now: now, deadline: deadline)
@@ -290,12 +340,12 @@ final class QueueReliabilityTests: XCTestCase {
             previousURI: "spotify:track:one",
             expectedNextURI: "spotify:track:two"
         )
+        let now = Date(timeIntervalSince1970: 1_000)
         var skipGuard = PlaybackQueueSync.SkipPollGuard()
-        skipGuard.record(leaving: skip.playingURIToIgnoreAfterSuccess, nowPlaying: "spotify:track:two")
+        skipGuard.record(leaving: skip.playingURIToIgnoreAfterSuccess, nowPlaying: "spotify:track:two", at: now)
         let stale = PlaybackQueueSnapshot(playingURI: "spotify:track:one", isPlaying: false)
         let empty = PlaybackQueueSnapshot()
         let caughtUp = PlaybackQueueSnapshot(playingURI: "spotify:track:two", isPlaying: false)
-        let now = Date(timeIntervalSince1970: 1_000)
         let deadline = PlaybackQueueSync.confirmationDeadline(now: now, pollIntervalSeconds: 5)
 
         XCTAssertEqual(skip.playingURIToIgnoreAfterSuccess, "spotify:track:one")
@@ -329,16 +379,16 @@ final class QueueReliabilityTests: XCTestCase {
     }
 
     func testLaggingPollOfAnOlderURIDoesNotUndoTwoSkips() {
-        var skipGuard = PlaybackQueueSync.SkipPollGuard()
-        skipGuard.record(leaving: "spotify:track:one", nowPlaying: "spotify:track:two")
-        skipGuard.record(leaving: "spotify:track:two", nowPlaying: "spotify:track:three")
-
-        XCTAssertTrue(skipGuard.isSupersededPoll(reportedPlayingURI: "spotify:track:one"))
-        XCTAssertTrue(skipGuard.isSupersededPoll(reportedPlayingURI: "spotify:track:two"))
-        XCTAssertFalse(skipGuard.isSupersededPoll(reportedPlayingURI: "spotify:track:three"))
-        XCTAssertTrue(skipGuard.isSupersededPoll(reportedPlayingURI: nil))
-
         let now = Date(timeIntervalSince1970: 1_000)
+        var skipGuard = PlaybackQueueSync.SkipPollGuard()
+        skipGuard.record(leaving: "spotify:track:one", nowPlaying: "spotify:track:two", at: now)
+        skipGuard.record(leaving: "spotify:track:two", nowPlaying: "spotify:track:three", at: now)
+
+        XCTAssertTrue(skipGuard.isSupersededPoll(reportedPlayingURI: "spotify:track:one", now: now))
+        XCTAssertTrue(skipGuard.isSupersededPoll(reportedPlayingURI: "spotify:track:two", now: now))
+        XCTAssertFalse(skipGuard.isSupersededPoll(reportedPlayingURI: "spotify:track:three", now: now))
+        XCTAssertTrue(skipGuard.isSupersededPoll(reportedPlayingURI: nil, now: now))
+
         let deadline = PlaybackQueueSync.confirmationDeadline(now: now, pollIntervalSeconds: 5)
         let first = PlaybackQueueSnapshot(playingURI: "spotify:track:one")
         let second = PlaybackQueueSnapshot(playingURI: "spotify:track:two")

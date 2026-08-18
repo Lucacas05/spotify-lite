@@ -10,8 +10,9 @@ import os
 /// issued to a custom client ID pass the classic session login but are then
 /// denied by login5 with INVALID_CREDENTIALS when spirc registers the Connect
 /// device, so playback never works with them. `--enable-oauth` uses librespot's
-/// own client ID (one browser approval), caches reusable credentials in the
-/// system cache, and later launches log in silently from that cache.
+/// own client ID (one browser approval), caches reusable credentials in a
+/// **per-account** system cache, and later launches log in silently from that
+/// cache. Issue #16: do not pass the app's Web API token to this process.
 @MainActor
 @Observable
 final class LibrespotEngine {
@@ -21,29 +22,39 @@ final class LibrespotEngine {
         case stopped
         case starting
         case running(version: String)
+        /// Terminal for this local session. The app keeps working in remote
+        /// control; the owner surfaces a banner with Retry. Never a dead-end
+        /// with no fallback.
         case failed(String)
     }
 
-    /// Restart-on-crash budget: 1 s, 2 s, 4 s, then give up until the user retries.
-    static let restartDelaysSeconds: [Int] = [1, 2, 4]
-    /// A crash after this much uptime starts a fresh retry budget.
-    static let healthyUptimeSeconds: TimeInterval = 60
-
     private(set) var status: Status = .stopped
+    /// Spotify account whose `credentials.json` this engine may read or write.
+    /// Required before `start()`; logout clears it after wiping that file.
+    var accountUserID: String?
     /// True when the last start failed because the binary is missing —
     /// the UI shows the install sheet instead of an error banner.
     private(set) var isNotInstalled = false
     /// Called when the engine gives up (crash-restart budget exhausted or a
-    /// failure that needs the user), so the owner can surface a banner.
+    /// failure that needs the user), so the owner can surface a banner and
+    /// fall back to remote control.
     var onUnrecoverableFailure: ((String) -> Void)?
+    /// Called when the child exits for any reason other than `stop()`, so the
+    /// owner can drop Now Playing ownership. Not a poll.
+    var onProcessExited: (() -> Void)?
 
     private var process: Process?
+    private var startTask: Task<Void, Never>?
     /// Write end of the wrapper stdin pipe. Closing it (or dying) kills librespot.
     private var lifetimeStdin: FileHandle?
     private var recentStderr: [String] = []
     private var restartAttempts = 0
     private var restartTask: Task<Void, Never>?
     private var launchDate: Date?
+    /// True only while a user-started local session may be auto-relaunched.
+    /// Cleared on `stop()` and after degrade — then the supervisor must not
+    /// launch again until the next explicit opt-in.
+    private var userSessionActive = false
     private let logger = Logger(subsystem: "com.lucas.spotifylite", category: "librespot")
 
     var isRunning: Bool {
@@ -52,29 +63,14 @@ final class LibrespotEngine {
     }
 
     func start() async {
-        guard process == nil else { return }
-        cancelPendingRestart()
-        restartAttempts = 0
-        isNotInstalled = false
-        await reapStaleInstances()
-        status = .starting
-        do {
-            let installation = try LibrespotLocator.locate()
-            try launch(installation: installation)
-            logger.info("launched \(installation.version, privacy: .public) from \(installation.binaryURL.path, privacy: .public)")
-            status = .running(version: installation.version)
-        } catch {
-            logger.error("start failed: \(error.localizedDescription, privacy: .public)")
-            if case LibrespotLocator.LocatorError.notInstalled = error {
-                isNotInstalled = true
-            }
-            status = .failed(error.localizedDescription)
-            closeLifetimePipe()
-            process = nil
-        }
+        userSessionActive = true
+        await runStart(resetAttempts: true)
     }
 
     func stop() {
+        userSessionActive = false
+        startTask?.cancel()
+        startTask = nil
         cancelPendingRestart()
         guard let process else {
             status = .stopped
@@ -91,20 +87,96 @@ final class LibrespotEngine {
     /// True once librespot has cached reusable credentials from a previous login.
     var needsAuthorization: Bool {
         guard let dir = try? cacheDirectory() else { return true }
-        return !FileManager.default.fileExists(atPath: dir.appending(path: "credentials.json").path)
+        return !FileManager.default.fileExists(
+            atPath: dir.appending(path: LibrespotAccountCache.credentialsFileName).path)
+    }
+
+    private func runStart(resetAttempts: Bool) async {
+        if !resetAttempts && !userSessionActive {
+            return
+        }
+        switch LibrespotStartGate.role(hasInFlightStart: startTask != nil, hasLiveProcess: process != nil) {
+        case .joinInFlight:
+            await startTask?.value
+            return
+        case .alreadyRunning:
+            return
+        case .lead:
+            break
+        }
+
+        let task = Task { @MainActor [weak self] in
+            await self?.performStart(resetAttempts: resetAttempts)
+        }
+        startTask = task
+        await task.value
+        if startTask == task {
+            startTask = nil
+        }
+    }
+
+    private func performStart(resetAttempts: Bool) async {
+        if resetAttempts {
+            restartAttempts = 0
+        }
+        cancelPendingRestart()
+        isNotInstalled = false
+        status = .starting
+        await reapStaleInstances()
+        guard !Task.isCancelled else { return }
+        guard accountUserID != nil else {
+            status = .failed(LibrespotAccountCacheError.missingSpotifyAccount.localizedDescription)
+            userSessionActive = false
+            return
+        }
+
+        do {
+            let installation = try await LibrespotLocator.locate()
+            guard !Task.isCancelled else { return }
+            if installation.versionIsUnknown {
+                // Overbuild constraint: unknown version never gets its own UI.
+                // Warn in the log; keep going. Too-old is the existing `.failed` path.
+                logger.warning(
+                    "librespot version unknown (\(installation.version, privacy: .public)); minimum is 0.8.0, proceeding"
+                )
+            }
+            recentStderr = []
+            try launch(installation: installation)
+            guard !Task.isCancelled else { return }
+            logger.info("launched \(installation.version, privacy: .public) from \(installation.binaryURL.path, privacy: .public)")
+            status = .running(version: installation.version)
+        } catch {
+            logger.error("start failed: \(error.localizedDescription, privacy: .public)")
+            if case LibrespotLocator.LocatorError.notInstalled = error {
+                isNotInstalled = true
+            }
+            status = .failed(error.localizedDescription)
+            closeLifetimePipe()
+            process = nil
+            userSessionActive = false
+            if !resetAttempts {
+                onUnrecoverableFailure?(error.localizedDescription)
+            }
+        }
     }
 
     /// SIGTERM leftover SpotifyLite librespot processes (orphans from crash /
     /// Xcode stop). Does not touch `credentials.json`.
     private func reapStaleInstances() async {
-        let cachePath: String
-        do {
-            cachePath = try cacheDirectory().path
-        } catch {
-            return
+        var cachePaths: [String] = []
+        if let accountPath = try? cacheDirectory().path {
+            cachePaths.append(accountPath)
         }
-        let pids = LibrespotProcessLifetime.stalePIDs(
-            deviceName: Self.deviceName, cachePath: cachePath)
+        if let applicationSupport = try? LibrespotAccountCache.defaultApplicationSupport() {
+            cachePaths.append(
+                LibrespotAccountCache.legacyCacheDirectory(applicationSupport: applicationSupport).path)
+        }
+        var pids: [pid_t] = []
+        for cachePath in cachePaths {
+            pids.append(contentsOf: LibrespotProcessLifetime.stalePIDs(
+                deviceName: Self.deviceName, cachePath: cachePath))
+        }
+        pids = Array(Set(pids)).sorted()
         guard !pids.isEmpty else { return }
         logger.info("reaping \(pids.count, privacy: .public) stale librespot process(es)")
         LibrespotProcessLifetime.terminate(pids: pids)
@@ -122,20 +194,11 @@ final class LibrespotEngine {
 
     private func launch(installation: LibrespotLocator.Installation) throws {
         let cacheURL = try cacheDirectory()
-
-        var librespotArguments = [
-            "--name", Self.deviceName,
-            "--backend", "rodio",
-            "--zeroconf-backend", "dns-sd",
-            "--device-type", "computer",
-            "--bitrate", "320",
-            "--system-cache", cacheURL.path,
-        ]
-        if needsAuthorization {
-            // One-time: librespot opens the default browser so the user can
-            // approve access; the resulting credentials land in the cache.
-            librespotArguments.append("--enable-oauth")
-        }
+        let librespotArguments = LibrespotLaunchFlags.processArguments(
+            cachePath: cacheURL.path,
+            enableOAuth: needsAuthorization,
+            deviceName: Self.deviceName
+        )
 
         let lifetimePipe = Pipe()
         let process = Process()
@@ -168,60 +231,60 @@ final class LibrespotEngine {
 
     private func handleTermination(code: Int32) {
         logger.error("terminated with code \(code)")
-        guard process != nil else { return }  // stop() already handled it
+        let wasIntentionalStop = process == nil
+        guard !wasIntentionalStop else { return }
         process = nil
         closeLifetimePipe()
-        let detail = recentStderr.suffix(3).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        if detail.contains("INVALID_CREDENTIALS") || detail.contains("Login request was denied") {
-            // Stored credentials went bad; drop them so the next start
-            // re-runs the browser authorization instead of failing forever.
-            // Restarting automatically would pop the OAuth browser unasked.
-            if let dir = try? cacheDirectory() {
-                try? FileManager.default.removeItem(at: dir.appending(path: "credentials.json"))
-            }
-            let message = "Spotify rejected the saved credentials. They were reset — try playing again to re-authorize."
-            status = .failed(message)
-            onUnrecoverableFailure?(message)
-            return
-        }
+        onProcessExited?()
+        let detail = recentStderr.suffix(3).joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let kind = LibrespotRestartPolicy.classify(
+            terminationStatus: code,
+            stderr: detail,
+            wasIntentionalStop: false
+        )
+        let uptime = launchDate.map { Date().timeIntervalSince($0) } ?? 0
+        let outcome = LibrespotRestartPolicy.decide(
+            kind: kind,
+            uptime: uptime,
+            attemptsSoFar: restartAttempts,
+            stderrDetail: detail,
+            userSessionActive: userSessionActive
+        )
+        restartAttempts = outcome.attempts
 
-        // Unexpected death: restart with backoff before giving up.
-        if let launchDate, Date().timeIntervalSince(launchDate) > Self.healthyUptimeSeconds {
-            restartAttempts = 0
-        }
-        if restartAttempts < Self.restartDelaysSeconds.count {
-            restartAttempts += 1
-            let delay = Self.restartDelaysSeconds[restartAttempts - 1]
-            logger.info("restarting in \(delay)s (attempt \(self.restartAttempts)/\(Self.restartDelaysSeconds.count))")
+        switch outcome.decision {
+        case .ignore:
+            return
+        case .resetCredentialsAndFail(let message):
+            if let dir = try? cacheDirectory() {
+                try? FileManager.default.removeItem(
+                    at: dir.appending(path: LibrespotAccountCache.credentialsFileName))
+            }
+            degradeToRemoteControl(message: message)
+        case .restart(let delay, let attempt):
+            logger.info("restarting in \(delay)s (attempt \(attempt)/\(LibrespotRestartPolicy.delaysSeconds.count))")
             status = .starting
             restartTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(delay))
                 guard !Task.isCancelled else { return }
-                await self?.relaunchAfterCrash()
+                guard self?.userSessionActive == true else { return }
+                await self?.runStart(resetAttempts: false)
             }
-            return
+        case .degradeToRemote(let message):
+            degradeToRemoteControl(message: message)
         }
-
-        let message = detail.isEmpty
-            ? "Local playback stopped (librespot exited with code \(code))."
-            : "Local playback stopped: \(detail)"
-        status = .failed(message)
-        onUnrecoverableFailure?(message)
     }
 
-    private func relaunchAfterCrash() async {
-        // stop() or a user start() may have raced the backoff sleep.
-        guard process == nil, status == .starting else { return }
-        do {
-            let installation = try LibrespotLocator.locate()
-            try launch(installation: installation)
-            logger.info("relaunched after crash (attempt \(self.restartAttempts))")
-            status = .running(version: installation.version)
-        } catch {
-            logger.error("relaunch failed: \(error.localizedDescription, privacy: .public)")
-            status = .failed(error.localizedDescription)
-            onUnrecoverableFailure?(error.localizedDescription)
-        }
+    private func degradeToRemoteControl(message: String) {
+        userSessionActive = false
+        cancelPendingRestart()
+        startTask?.cancel()
+        startTask = nil
+        status = .failed(message)
+        closeLifetimePipe()
+        process = nil
+        onUnrecoverableFailure?(message)
     }
 
     private func cancelPendingRestart() {
@@ -247,12 +310,12 @@ final class LibrespotEngine {
         return try FileHandle(forWritingTo: url)
     }
 
-    /// Holds librespot's reusable credential — sensitive, so owner-only permissions.
+    /// Holds this Spotify account's reusable credential — owner-only permissions.
     private func cacheDirectory() throws -> URL {
-        let base = try FileManager.default.url(for: .applicationSupportDirectory,
-                                               in: .userDomainMask,
-                                               appropriateFor: nil, create: true)
-        let dir = base.appending(path: "SpotifyLite/librespot")
+        guard let accountUserID else { throw LibrespotAccountCacheError.missingSpotifyAccount }
+        let applicationSupport = try LibrespotAccountCache.defaultApplicationSupport()
+        let dir = try LibrespotAccountCache.cacheDirectory(
+            for: accountUserID, applicationSupport: applicationSupport)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
         return dir
