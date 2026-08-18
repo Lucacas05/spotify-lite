@@ -118,7 +118,8 @@ enum LibrespotLocator {
         return true
     }
 
-    /// Unknown / unparseable versions are usable (caller warns). Too-old
+    /// Unknown / unparseable versions are usable. The engine logs a warning;
+    /// there is no Settings row, about panel, or version badge. Too-old
     /// versions are rejected so the next candidate can be tried.
     static func evaluateVersion(output: String, exitStatus: Int32) -> VersionVerdict {
         guard exitStatus == 0 else {

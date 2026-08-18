@@ -114,6 +114,8 @@ final class LibrespotEngine {
         do {
             let installation = try LibrespotLocator.locate()
             if installation.versionIsUnknown {
+                // Overbuild constraint: unknown version never gets its own UI.
+                // Warn in the log; keep going. Too-old is the existing `.failed` path.
                 logger.warning(
                     "librespot version unknown (\(installation.version, privacy: .public)); minimum is 0.8.0, proceeding"
                 )

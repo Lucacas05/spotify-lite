@@ -154,9 +154,14 @@ final class LibrespotLocatorTests: XCTestCase {
                 runError: nil
             ),
         ]
-        let installation = try? LibrespotLocator.pickInstallation(from: probes).get()
+        let result = LibrespotLocator.pickInstallation(from: probes)
+        let installation = try? result.get()
         XCTAssertEqual(installation?.binaryURL.path, "/head/librespot")
         XCTAssertEqual(installation?.versionIsUnknown, true)
+        // Unknown version is log-only: it must not become LocatorError (banner/UI).
+        if case .failure = result {
+            XCTFail("unknown version must not hard-block")
+        }
     }
 
     func testPickInstallationFailsUnsupportedWhenEveryCandidateIsTooOld() {
